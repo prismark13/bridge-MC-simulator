@@ -83,6 +83,31 @@ also bundles DDS):
 python -m pip install endplay
 ```
 
+## Standalone app (no Python needed)
+
+Prefer a double-click app? Grab the packaged build from the
+[Releases](https://github.com/prismark13/bridge-slam-sim/releases) page
+(`BridgeSlamSim.exe` on Windows) — it bundles Python, Tk, Redeal and the DDS
+solver into one file, so end users install nothing.
+
+Build it yourself:
+
+```powershell
+# Windows
+powershell -ExecutionPolicy Bypass -File build.ps1        # -> dist\BridgeSlamSim.exe
+```
+```sh
+# macOS / Linux
+python -m pip install pyinstaller "git+https://github.com/anntzer/redeal"
+pyinstaller --noconfirm --onefile --windowed --name BridgeSlamSim \
+    --collect-all redeal bridge_sim_gui.py                 # -> dist/BridgeSlamSim
+```
+
+The `--collect-all redeal` flag is essential: it pulls Redeal's bundled DDS
+library into the frozen app. A GitHub Actions workflow
+(`.github/workflows/build.yml`) builds all three platforms automatically when a
+`v*` tag is pushed.
+
 ## Usage
 
 **GUI:**

@@ -1,0 +1,44 @@
+name: build
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false          # one OS failing shouldn't block the others
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Linux DDS / Tk libraries
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libgomp1 python3-tk
+
+      - name: Install build deps
+        run: |
+          python -m pip install --upgrade pip pyinstaller
+          python -m pip install "git+https://github.com/anntzer/redeal"
+
+      - name: Build standalone app
+        run: pyinstaller --noconfirm --onefile --windowed --name BridgeSlamSim --collect-all redeal bridge_sim_gui.py
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BridgeSlamSim-${{ runner.os }}
+          path: dist/*
+
+      - name: Attach to GitHub Release (on tag)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*

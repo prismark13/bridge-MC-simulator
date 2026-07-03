@@ -6,6 +6,17 @@ Deals are generated with Redeal (smartstack when possible) and solved
 double-dummy with the bundled DDS engine.  The tool reports how often every
 game and slam makes, with 95% confidence intervals.
 """
+import os
+import sys
+
+# A frozen windowed app (PyInstaller --windowed) has no console, so stdout and
+# stderr are None; any library that writes to them would crash at import.
+# Give them a sink before importing anything that might print.
+if sys.stdout is None:
+    sys.stdout = open(os.devnull, "w")
+if sys.stderr is None:
+    sys.stderr = open(os.devnull, "w")
+
 import ctypes
 import random
 import queue
