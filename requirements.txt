@@ -1,0 +1,7 @@
+# GUI (bridge_sim_gui.py) — deal generation + bundled DDS solver.
+# Not on PyPI; install from the repo (Windows: use the main-branch ZIP).
+#   python -m pip install "git+https://github.com/anntzer/redeal"
+# redeal
+
+# Headless examples under examples/ use endplay (pip-installable, bundles DDS).
+endplay>=0.5
