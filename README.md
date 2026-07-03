@@ -46,9 +46,17 @@ so you can decide whether a slam try is worth it and which strain is the spot.
 
 **Features**
 
+- **Per-seat input:** every seat (N/E/S/W) can be Random, a Fixed hand, or
+  Constrained (HCP + shape / min-lengths).
 - Every strain (♣/♦/♥/♠/NT) at game and slam level, plus grand-slam rate.
-- Input validation, an optional RNG **seed** for reproducibility, sample deals,
-  and a **Stop** button (rare filter constraints can't hang the app).
+- **Choose the side** to analyse (NS or EW) and the **vulnerability**.
+- **Scoring:** average score per contract, and a bidding-decision readout —
+  best game vs best slam by expected value, and the **expected IMP gain per
+  board** of bidding the slam.
+- Modern Windows-11 theme (`sv-ttk`) with a light/dark toggle; falls back to a
+  clean built-in theme if `sv-ttk` isn't installed.
+- Input validation, optional RNG **seed**, sample deals, and a **Stop** button
+  (rare constraints can't hang the app).
 - Fast: batched `CalcAllTables` across all cores solves ~32 full deals per DDS
   call (~10 ms/deal), so 5,000 deals finish in about a minute.
 

@@ -3,5 +3,8 @@
 #   python -m pip install "git+https://github.com/anntzer/redeal"
 # redeal
 
+# Optional: modern Windows-11 theme for the GUI (falls back to ttk 'clam').
+sv-ttk
+
 # Headless examples under examples/ use endplay (pip-installable, bundles DDS).
 endplay>=0.5
