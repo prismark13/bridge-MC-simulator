@@ -11,19 +11,46 @@ It ships with a Tk GUI and a couple of headless example scripts.
 ## What it answers
 
 For a fixed hand opposite a constrained partner, e.g. *"partner is 22–24
-balanced"*, it reports make-rates like:
+balanced"*, it reports make-rates for **every game and slam** with 95%
+confidence intervals, plus a few sample layouts:
 
 ```
-10000 deals (double-dummy, best NS declarer)
-----------------------------------------
-  3NT            94.4%  ±0.4
-  5♦             90.8%  ±0.6
-  6 best-minor   68.2%  ±0.9
-  any slam       69.5%  ±0.9
+5000 deals  (5000 tries, 100.0% accepted)
+double-dummy, best NS declarer
+
+GAMES
+--------------------------------
+  3NT         95.4% +-0.6  ###################
+  4H          76.x% +-...  ###############
+  4S          ...
+  5C          ...
+  5D          90.8% +-0.8  ##################
+  any game    99.x% +-...
+
+SLAMS
+--------------------------------
+  6C          58.0% +-1.4  ############
+  6D          49.4% +-1.4  ##########
+  6H          ...
+  6NT         ...
+  any slam    69.9% +-1.3  ##############
+  grand(7)    15.0% +-1.0  ###
+
+SAMPLE PARTNER HANDS
+--------------------------------
+  ♠AK8 ♥AQ7 ♦AJ6 ♣A872  HCP 22  shape (3,3,3,4)  tricks C11 D11 H10 S10 NT11
+  ...
 ```
 
-...with 95% confidence intervals, so you can decide whether a slam try is worth
-it and which strain is the right spot.
+so you can decide whether a slam try is worth it and which strain is the spot.
+
+**Features**
+
+- Every strain (♣/♦/♥/♠/NT) at game and slam level, plus grand-slam rate.
+- Input validation, an optional RNG **seed** for reproducibility, sample deals,
+  and a **Stop** button (rare filter constraints can't hang the app).
+- Fast: batched `CalcAllTables` across all cores solves ~32 full deals per DDS
+  call (~10 ms/deal), so 5,000 deals finish in about a minute.
 
 ## How it works
 
