@@ -1,17 +1,16 @@
 """
-Bridge slam/game Monte-Carlo GUI.
+Bridge game/slam Monte-Carlo GUI.
 
-You (South) hold a fixed hand; partner (North) is constrained by HCP + shape.
-Deals are generated with Redeal (smartstack when possible) and solved
-double-dummy with the bundled DDS engine.  The tool reports how often every
-game and slam makes, with 95% confidence intervals.
+Each seat (N/E/S/W) can be Random, a Fixed hand, or Constrained (HCP range +
+shape / min-lengths).  Deals are generated with Redeal (smartstack when one
+constrained seat is balanced) and solved double-dummy with the bundled DDS
+engine.  Reports how often every NS game and slam makes, with 95% CIs.
 """
 import os
 import sys
 
 # A frozen windowed app (PyInstaller --windowed) has no console, so stdout and
 # stderr are None; any library that writes to them would crash at import.
-# Give them a sink before importing anything that might print.
 if sys.stdout is None:
     sys.stdout = open(os.devnull, "w")
 if sys.stderr is None:
@@ -29,9 +28,7 @@ from redeal import Deal, H, SmartStack, balanced, semibalanced, hcp
 from redeal import dds as _rdds
 
 # ---------------------------------------------------------------------------
-# Fast double-dummy: call DDS's batched CalcAllTables directly through the
-# dds.dll that Redeal already loaded (solves 32 full tables per call across
-# all cores -- ~6x faster than Redeal's one-contract-at-a-time solver).
+# Fast double-dummy via DDS's batched CalcAllTables (32 tables/call, all cores)
 # ---------------------------------------------------------------------------
 BATCH = 32
 _SI = {"S": 0, "H": 1, "D": 2, "C": 3, "N": 4}   # strain index in resTable
@@ -53,7 +50,7 @@ class _TablesRes(Structure):
     _fields_ = [("noOfBoards", c_int), ("results", _TRes * BATCH)]
 
 
-class _ParBuf(Structure):           # scratch space DDS wants; we ignore par
+class _ParBuf(Structure):
     _fields_ = [("_b", c_byte * (BATCH * 1024))]
 
 
@@ -61,15 +58,14 @@ _rdds.dll.CalcAllTables.argtypes = [
     POINTER(_TDeals), c_int, c_int * 5, POINTER(_TablesRes), POINTER(_ParBuf)]
 try:
     _rdds.dll.SetMaxThreads(0)
-except Exception:                   # non-fatal; default threading still works
+except Exception:
     pass
-_TRUMP_FILTER = (c_int * 5)(0, 0, 0, 0, 0)   # 0 = compute this strain
+_TRUMP_FILTER = (c_int * 5)(0, 0, 0, 0, 0)
 _PAR = _ParBuf()
 
 
 def solve_batch(deals):
-    """Double-dummy-solve a list (<=BATCH) of Redeal deals.
-    Returns a list of dicts strain -> best NS declarer tricks."""
+    """DD-solve up to BATCH deals; return list of dict strain->best NS tricks."""
     dd = _TDeals(); dd.noOfTables = len(deals)
     for i, deal in enumerate(deals):
         for seat, hand in enumerate(deal):
@@ -83,110 +79,157 @@ def solve_batch(deals):
     out = []
     for i in range(len(deals)):
         rt = res.results[i].resTable
-        # best of North (0) / South (2) declarer per strain
         out.append({s: max(rt[_SI[s]][0], rt[_SI[s]][2]) for s in STRAINS})
     return out
 
 
 # ---------------------------------------------------------------------------
-# Simulation core (no Tk in here, so it can be tested headlessly)
+# Simulation core (no Tk here, so it can be tested headlessly)
 # ---------------------------------------------------------------------------
 SUITS = ["S", "H", "D", "C"]
 SUIT_SYM = {"S": "♠", "H": "♥", "D": "♦", "C": "♣"}
 RED = {"H", "D"}
 RANKS = "AKQJT98765432"
-STRAINS = ["C", "D", "H", "S", "N"]          # N = notrump
+STRAINS = ["C", "D", "H", "S", "N"]
+ORDER = ["N", "E", "S", "W"]
+ATTR = {"N": "north", "E": "east", "S": "south", "W": "west"}
+SHAPE_TEST = {"bal": balanced, "semibal": semibalanced}
 
-# game/slam trick thresholds per strain
 GAMES = [("3NT", "N", 9), ("4H", "H", 10), ("4S", "S", 10),
          ("5C", "C", 11), ("5D", "D", 11)]
 SLAMS = [("6C", "C", 12), ("6D", "D", 12), ("6H", "H", 12),
          ("6S", "S", 12), ("6NT", "N", 12)]
 
 
+class Aborted(Exception):
+    pass
+
+
 def parse_suit(tok):
-    """Return an uppercased, validated rank string for one suit (may be '')."""
     t = tok.strip().upper().replace("10", "T")
     if t in ("", "-", "VOID"):
         return ""
     bad = [c for c in t if c not in RANKS]
     if bad:
-        raise ValueError(f"invalid card(s) {''.join(bad)!r} (use A K Q J T 9..2)")
+        raise ValueError(f"invalid card(s) {''.join(bad)!r}")
     if len(set(t)) != len(t):
         raise ValueError("duplicate card in a suit")
     return t
 
 
-def parse_south(boxes):
-    """boxes: dict suit->str.  Returns a Redeal H() hand; must be exactly 13."""
-    holding, total = {}, 0
-    for s in SUITS:
+def parse_fixed(text):
+    """'AK5 QJT 9432 K8' -> (redeal-hand-string, set of (suit,rank))."""
+    toks = text.split()
+    if len(toks) != 4:
+        raise ValueError("need 4 suits separated by spaces, e.g. 'AK5 QJT 9432 K8'")
+    holds, total = {}, 0
+    for s, tok in zip(SUITS, toks):
         try:
-            holding[s] = parse_suit(boxes[s])
+            holds[s] = parse_suit(tok)
         except ValueError as e:
             raise ValueError(f"{SUIT_SYM[s]}: {e}")
-        total += len(holding[s])
+        total += len(holds[s])
     if total != 13:
-        raise ValueError(f"your hand has {total} cards - it must be exactly 13")
-    return H(" ".join(holding[s] or "-" for s in SUITS))
+        raise ValueError(f"{total} cards - a fixed hand needs exactly 13")
+    cards = {(s, r) for s in SUITS for r in holds[s]}
+    return " ".join(holds[s] or "-" for s in SUITS), cards
 
 
-def fmt_north(deal):
-    n = deal.north
-    return " ".join(f"{SUIT_SYM[s]}{h or '-'}" for s, h in
-                    zip(SUITS, (n.spades, n.hearts, n.diamonds, n.clubs)))
+def parse_shape(text):
+    """Return (kind, mins).  kind in {any, bal, semibal, minlen}."""
+    t = text.strip().lower()
+    if t in ("", "any"):
+        return "any", [0, 0, 0, 0]
+    if t in ("bal", "balanced"):
+        return "bal", [0, 0, 0, 0]
+    if t in ("semi", "semibal", "semibalanced"):
+        return "semibal", [0, 0, 0, 0]
+    parts = t.split()
+    if len(parts) == 4 and all(p.isdigit() for p in parts):
+        mins = [int(p) for p in parts]
+        if sum(mins) > 13:
+            raise ValueError(f"min lengths sum to {sum(mins)} (>13)")
+        return "minlen", mins
+    raise ValueError("use 'bal', 'semibal', 'any', or 4 min-lengths like '0 5 4 0'")
 
 
-class Aborted(Exception):
-    pass
+def _constrains(sp):
+    _, lo, hi, kind, mins = sp
+    return lo > 0 or hi < 37 or kind != "any" or any(mins)
 
 
-def simulate(south_hand, lo, hi, mode, mins, n, max_tries, seed,
-             n_samples=6, stop=lambda: False, progress=lambda a, t: None):
-    """Run the Monte-Carlo; returns (tally, tries, accepted, samples)."""
+def _smart_seat(specs):
+    """The single seat we can smartstack (first bal/semibal constrained seat)."""
+    for seat in ORDER:
+        sp = specs[seat]
+        if sp[0] == "con" and sp[3] in SHAPE_TEST:
+            return seat
+    return None
+
+
+def fmt_hand(hand):
+    return " ".join(f"{SUIT_SYM[s]}{x or '-'}" for s, x in
+                    zip(SUITS, (hand.spades, hand.hearts, hand.diamonds, hand.clubs)))
+
+
+def simulate(specs, n, max_tries, seed, n_samples=6,
+             stop=lambda: False, progress=lambda a, t: None):
+    """specs: seat -> ('fixed', handstr) | ('con', lo, hi, kind, mins) | ('random',)."""
     if seed not in (None, ""):
         random.seed(int(seed))
 
-    predeal = {"S": south_hand}
-    smart = "Balanced" in mode or "Semibalanced" in mode
+    predeal = {}
+    for seat, sp in specs.items():
+        if sp[0] == "fixed":
+            predeal[seat] = H(sp[1])
+
+    smart = _smart_seat(specs)
     if smart:
-        shape = balanced if "Balanced" in mode else semibalanced
-        predeal["N"] = SmartStack(shape, hcp, range(lo, hi + 1))
-    dealer = Deal.prepare(predeal)
+        _, lo, hi, kind, _ = specs[smart]
+        predeal[smart] = SmartStack(SHAPE_TEST[kind], hcp, range(lo, hi + 1))
+
+    rej = [(seat, sp) for seat, sp in specs.items()
+           if sp[0] == "con" and seat != smart and _constrains(sp)]
 
     def accept(deal):
-        if not (lo <= deal.north.hcp <= hi):
-            return False
-        sh = deal.north.shape
-        return all(sh[i] >= mins[i] for i in range(4))
+        for seat, sp in rej:
+            _, lo, hi, kind, mins = sp
+            hand = getattr(deal, ATTR[seat])
+            if not (lo <= hand.hcp <= hi):
+                return False
+            if kind in SHAPE_TEST and not SHAPE_TEST[kind](hand):
+                return False
+            if kind == "minlen":
+                sh = hand.shape
+                if any(sh[i] < mins[i] for i in range(4)):
+                    return False
+        return True
 
+    dealer = Deal.prepare(predeal)
     keys = [k for k, _, _ in GAMES] + [k for k, _, _ in SLAMS] + \
            ["any game", "any slam", "grand"]
     tally = {k: 0 for k in keys}
-    samples = []
+    samples, pending = [], []
     accepted = candidates = tries = 0
-    pending = []
 
     def flush():
         nonlocal accepted
         if not pending:
             return
         for deal, t in zip(pending, solve_batch(pending)):
-            made_game = made_slam = False
-            for label, st, need in GAMES:
+            g = s = False
+            for lab, st, need in GAMES:
                 if t[st] >= need:
-                    tally[label] += 1
-                    made_game = True
-            for label, st, need in SLAMS:
+                    tally[lab] += 1; g = True
+            for lab, st, need in SLAMS:
                 if t[st] >= need:
-                    tally[label] += 1
-                    made_slam = True
-            tally["any game"] += made_game
-            tally["any slam"] += made_slam
+                    tally[lab] += 1; s = True
+            tally["any game"] += g
+            tally["any slam"] += s
             tally["grand"] += max(t.values()) >= 13
             if len(samples) < n_samples:
-                samples.append((deal.north.hcp, deal.north.shape,
-                                fmt_north(deal), dict(t)))
+                samples.append(({seat: fmt_hand(getattr(deal, ATTR[seat]))
+                                 for seat in ORDER}, dict(t)))
             accepted += 1
         pending.clear()
 
@@ -197,7 +240,7 @@ def simulate(south_hand, lo, hi, mode, mins, n, max_tries, seed,
             break
         tries += 1
         deal = dealer()
-        if not smart and not accept(deal):
+        if rej and not accept(deal):
             continue
         pending.append(deal)
         candidates += 1
@@ -211,6 +254,14 @@ def simulate(south_hand, lo, hi, mode, mins, n, max_tries, seed,
 # ---------------------------------------------------------------------------
 # GUI
 # ---------------------------------------------------------------------------
+DEFAULTS = {
+    "N": ("Constrain", "", "22", "24", "bal"),
+    "E": ("Random", "", "0", "37", "any"),
+    "S": ("Fixed", "9 J6 K9753 QJ654", "0", "37", "any"),
+    "W": ("Random", "", "0", "37", "any"),
+}
+
+
 class App(tk.Frame):
     def __init__(self, master):
         super().__init__(master, padx=12, pady=10)
@@ -220,114 +271,101 @@ class App(tk.Frame):
         self.q = queue.Queue()
         self.worker = None
         self.stop_flag = False
+        self.mode, self.hand, self.hlo, self.hhi, self.shp = {}, {}, {}, {}, {}
         self._build()
-
-    # ---------------------------------------------------------------- layout
-    def _hd(self, text, row):
-        tk.Label(self, text=text, font=("Segoe UI", 10, "bold")).grid(
-            row=row, column=0, columnspan=8, sticky="w", pady=(8, 2))
 
     def _build(self):
         r = 0
-        self._hd("YOUR HAND (South)", r); r += 1
-        self.south = {}
-        default = {"S": "9", "H": "J6", "D": "K9753", "C": "QJ654"}
-        c = 0
-        for s in SUITS:
-            tk.Label(self, text=SUIT_SYM[s], font=("Segoe UI", 13),
-                     fg="red" if s in RED else "black").grid(row=r, column=c, sticky="e")
-            e = tk.Entry(self, width=10); e.insert(0, default[s])
-            e.grid(row=r, column=c + 1, padx=(2, 10)); self.south[s] = e; c += 2
-        r += 1
+        tk.Label(self, text="Fixed = '♠ ♥ ♦ ♣' e.g. 'AK5 QJT 9432 K8'"
+                            "   |   Shape = bal / semibal / any / '0 5 4 0'",
+                 font=("Segoe UI", 9)).grid(row=r, column=0, sticky="w"); r += 1
 
-        self._hd("PARTNER (North)", r); r += 1
-        tk.Label(self, text="HCP").grid(row=r, column=0, sticky="e")
-        self.hcp_lo = self._spin(22, 0, 37); self.hcp_lo.grid(row=r, column=1, sticky="w")
-        tk.Label(self, text="to").grid(row=r, column=2)
-        self.hcp_hi = self._spin(24, 0, 37); self.hcp_hi.grid(row=r, column=3, sticky="w"); r += 1
+        sf = tk.Frame(self); sf.grid(row=r, column=0, sticky="we", pady=4); r += 1
+        for c, h in enumerate(["Seat", "Mode", "Fixed hand", "HCP", "", "", "Shape"]):
+            tk.Label(sf, text=h, font=("Segoe UI", 9, "bold")).grid(row=0, column=c, padx=2)
+        for i, seat in enumerate(ORDER, start=1):
+            m, hnd, lo, hi, shp = DEFAULTS[seat]
+            tk.Label(sf, text=seat, font=("Segoe UI", 11, "bold")).grid(row=i, column=0)
+            cb = ttk.Combobox(sf, width=9, state="readonly",
+                              values=["Random", "Fixed", "Constrain"])
+            cb.set(m); cb.grid(row=i, column=1, padx=2)
+            cb.bind("<<ComboboxSelected>>", lambda _e, s=seat: self._sync(s))
+            self.mode[seat] = cb
+            e = tk.Entry(sf, width=20); e.insert(0, hnd)
+            e.grid(row=i, column=2, padx=2); self.hand[seat] = e
+            slo = tk.Spinbox(sf, from_=0, to=37, width=3); slo.delete(0); slo.insert(0, lo)
+            slo.grid(row=i, column=3); self.hlo[seat] = slo
+            tk.Label(sf, text="-").grid(row=i, column=4)
+            shi = tk.Spinbox(sf, from_=0, to=37, width=3); shi.delete(0); shi.insert(0, hi)
+            shi.grid(row=i, column=5); self.hhi[seat] = shi
+            es = tk.Entry(sf, width=10); es.insert(0, shp)
+            es.grid(row=i, column=6, padx=2); self.shp[seat] = es
 
-        tk.Label(self, text="Shape").grid(row=r, column=0, sticky="e")
-        self.shape = ttk.Combobox(self, width=26, state="readonly", values=[
-            "Balanced (fast)", "Semibalanced (fast)", "Custom min-lengths (filter)"])
-        self.shape.set("Balanced (fast)")
-        self.shape.bind("<<ComboboxSelected>>", lambda _e: self._sync_mode())
-        self.shape.grid(row=r, column=1, columnspan=4, sticky="w"); r += 1
-
-        self.mins_lbl = tk.Label(self, text="Min len ♠♥♦♣")
-        self.mins_lbl.grid(row=r, column=0, sticky="e")
-        self.mins = tk.Entry(self, width=10); self.mins.insert(0, "0 5 4 0")
-        self.mins.grid(row=r, column=1, columnspan=3, sticky="w")
-        self.mins_hint = tk.Label(self, text="(Custom mode only)", fg="gray")
-        self.mins_hint.grid(row=r, column=4, columnspan=3, sticky="w"); r += 1
-
-        self._hd("RUN", r); r += 1
-        tk.Label(self, text="Deals").grid(row=r, column=0, sticky="e")
-        self.ndeals = self._spin(5000, 100, 1000000, inc=1000, width=8)
-        self.ndeals.grid(row=r, column=1, sticky="w")
-        tk.Label(self, text="Seed").grid(row=r, column=2, sticky="e")
-        self.seed = tk.Entry(self, width=8); self.seed.grid(row=r, column=3, sticky="w")
+        run = tk.Frame(self); run.grid(row=r, column=0, sticky="we", pady=(6, 2)); r += 1
+        tk.Label(run, text="Deals").pack(side="left")
+        self.ndeals = tk.Spinbox(run, from_=100, to=1000000, increment=1000, width=8)
+        self.ndeals.delete(0); self.ndeals.insert(0, "5000"); self.ndeals.pack(side="left", padx=(2, 10))
+        tk.Label(run, text="Seed").pack(side="left")
+        self.seed = tk.Entry(run, width=7); self.seed.pack(side="left", padx=(2, 10))
         self.samples_var = tk.IntVar(value=1)
-        tk.Checkbutton(self, text="sample deals", variable=self.samples_var
-                       ).grid(row=r, column=4, columnspan=3, sticky="w"); r += 1
-
-        self.run_btn = tk.Button(self, text="Run", width=10, command=self.run)
-        self.run_btn.grid(row=r, column=1, sticky="w")
-        self.stop_btn = tk.Button(self, text="Stop", width=8, command=self.stop,
-                                  state="disabled")
-        self.stop_btn.grid(row=r, column=2)
-        tk.Button(self, text="Copy results", width=12,
-                  command=self._copy).grid(row=r, column=3, columnspan=2, sticky="w"); r += 1
+        tk.Checkbutton(run, text="samples", variable=self.samples_var).pack(side="left")
+        self.run_btn = tk.Button(run, text="Run", width=8, command=self.run); self.run_btn.pack(side="left", padx=6)
+        self.stop_btn = tk.Button(run, text="Stop", width=6, command=self.stop, state="disabled"); self.stop_btn.pack(side="left")
+        tk.Button(run, text="Copy", width=6, command=self._copy).pack(side="left", padx=6)
 
         self.prog = tk.Label(self, text="", anchor="w", fg="#0a5")
-        self.prog.grid(row=r, column=0, columnspan=8, sticky="we"); r += 1
-
-        self.out = tk.Text(self, width=54, height=22, font=("Consolas", 10), wrap="none")
-        self.out.grid(row=r, column=0, columnspan=8, sticky="nsew", pady=(6, 0))
+        self.prog.grid(row=r, column=0, sticky="we"); r += 1
+        self.out = tk.Text(self, width=60, height=22, font=("Consolas", 10), wrap="none")
+        self.out.grid(row=r, column=0, sticky="nsew", pady=(6, 0))
         self.out.tag_config("warn", foreground="#c00")
         self.out.tag_config("head", font=("Consolas", 10, "bold"))
-        self.rowconfigure(r, weight=1)
-        for col in range(8):
-            self.columnconfigure(col, weight=1)
-        self._sync_mode()
+        self.rowconfigure(r, weight=1); self.columnconfigure(0, weight=1)
+        for seat in ORDER:
+            self._sync(seat)
 
-    def _spin(self, val, lo, hi, inc=1, width=4):
-        sb = tk.Spinbox(self, from_=lo, to=hi, increment=inc, width=width)
-        sb.delete(0, "end"); sb.insert(0, str(val))
-        return sb
-
-    def _sync_mode(self):
-        custom = "Custom" in self.shape.get()
-        self.mins.config(state="normal" if custom else "disabled")
-        self.mins_lbl.config(fg="black" if custom else "gray")
+    def _sync(self, seat):
+        m = self.mode[seat].get()
+        self.hand[seat].config(state="normal" if m == "Fixed" else "disabled")
+        st = "normal" if m == "Constrain" else "disabled"
+        for w in (self.hlo[seat], self.hhi[seat], self.shp[seat]):
+            w.config(state=st)
 
     # ------------------------------------------------------------- execution
     def run(self):
         try:
-            south = parse_south({s: self.south[s].get() for s in SUITS})
-            lo, hi = int(self.hcp_lo.get()), int(self.hcp_hi.get())
-            if lo > hi:
-                raise ValueError("HCP min is greater than HCP max")
+            specs, fixed_cards = {}, {}
+            for seat in ORDER:
+                m = self.mode[seat].get()
+                if m == "Fixed":
+                    hstr, cards = parse_fixed(self.hand[seat].get())
+                    for c in cards:
+                        if c in fixed_cards:
+                            raise ValueError(f"{seat}: {SUIT_SYM[c[0]]}{c[1]} "
+                                             f"also in {fixed_cards[c]}")
+                        fixed_cards[c] = seat
+                    specs[seat] = ("fixed", hstr)
+                elif m == "Constrain":
+                    lo, hi = int(self.hlo[seat].get()), int(self.hhi[seat].get())
+                    if lo > hi:
+                        raise ValueError(f"{seat}: HCP min > max")
+                    kind, mins = parse_shape(self.shp[seat].get())
+                    specs[seat] = ("con", lo, hi, kind, mins)
+                else:
+                    specs[seat] = ("random",)
             n = int(self.ndeals.get())
-            mode = self.shape.get()
-            mins = [0, 0, 0, 0]
-            if "Custom" in mode:
-                parts = self.mins.get().split()
-                if len(parts) != 4:
-                    raise ValueError("Min lengths need 4 numbers, e.g. 0 5 4 0")
-                mins = [int(x) for x in parts]
-                if sum(mins) > 13:
-                    raise ValueError(f"min lengths sum to {sum(mins)} (>13) - impossible")
         except ValueError as e:
             self.out.delete("1.0", "end"); self._log(f"!  {e}\n", "warn"); return
 
+        smart = _smart_seat(specs)
+        rej_present = any(sp[0] == "con" and seat != smart and _constrains(sp)
+                          for seat, sp in specs.items())
         self.out.delete("1.0", "end")
         self.stop_flag = False
         self.run_btn.config(state="disabled"); self.stop_btn.config(state="normal")
         self.prog.config(text="preparing...")
-        max_tries = n if "Custom" not in mode else max(n * 500, 2_000_000)
+        max_tries = max(n * 500, 2_000_000) if rej_present else n
         n_samples = 6 if self.samples_var.get() else 0
-        args = (south, lo, hi, mode, mins, n, max_tries,
-                self.seed.get().strip(), n_samples)
+        args = (specs, n, max_tries, self.seed.get().strip(), n_samples)
         self.worker = threading.Thread(target=self._work, args=args, daemon=True)
         self.worker.start()
         self.after(80, self._poll)
@@ -335,17 +373,15 @@ class App(tk.Frame):
     def stop(self):
         self.stop_flag = True
 
-    def _work(self, *a):
-        south, lo, hi, mode, mins, n, max_tries, seed, n_samples = a
+    def _work(self, specs, n, max_tries, seed, n_samples):
         try:
-            res = simulate(south, lo, hi, mode, mins, n, max_tries, seed,
-                           n_samples=n_samples,
+            res = simulate(specs, n, max_tries, seed, n_samples=n_samples,
                            stop=lambda: self.stop_flag,
-                           progress=lambda acc, tr: self.q.put(("prog", acc, tr)))
-            self.q.put(("done", res, mode))
+                           progress=lambda a, t: self.q.put(("prog", a, t)))
+            self.q.put(("done", res, n))
         except Aborted:
             self.q.put(("stopped",))
-        except Exception as e:            # surface anything to the UI
+        except Exception as e:
             self.q.put(("error", repr(e)))
 
     def _poll(self):
@@ -353,15 +389,15 @@ class App(tk.Frame):
             while True:
                 m = self.q.get_nowait()
                 if m[0] == "prog":
-                    _, acc, tr = m
-                    rate = f"  ({100*acc/tr:.1f}% accepted)" if tr else ""
-                    self.prog.config(text=f"simulating... {acc} deals / {tr} tries{rate}")
+                    _, a, t = m
+                    rate = f"  ({100*a/t:.1f}% accepted)" if t else ""
+                    self.prog.config(text=f"simulating... {a} deals / {t} tries{rate}")
                 elif m[0] == "error":
                     self._log(f"Error: {m[1]}\n", "warn"); self._finish("error")
                 elif m[0] == "stopped":
                     self._log("Stopped.\n", "warn"); self._finish("stopped")
                 elif m[0] == "done":
-                    self._report(*m[1], mode=m[2]); self._finish("done")
+                    self._report(*m[1], want=m[2]); self._finish("done")
         except queue.Empty:
             pass
         if self.worker and self.worker.is_alive():
@@ -372,22 +408,20 @@ class App(tk.Frame):
         if why == "done":
             self.prog.config(text="done.")
 
-    def _report(self, tally, tries, accepted, samples, mode):
+    def _report(self, tally, tries, accepted, samples, want):
         out = self.out
         if accepted == 0:
-            self._log("No qualifying deals - the constraint may be impossible "
-                      "given your hand.\n", "warn")
+            self._log("No qualifying deals - the constraints may be impossible.\n", "warn")
             return
         n = accepted
-        if "Custom" in mode and accepted < int(self.ndeals.get()):
+        if accepted < want:
             self._log(f"!  Only {accepted} deals found in {tries} tries "
                       f"(rare constraint); results are for those.\n\n", "warn")
 
         def line(label, key):
             p = 100 * tally[key] / n
             se = 1.96 * (p * (100 - p) / n) ** 0.5
-            bar = "#" * round(p / 5)
-            out.insert("end", f"  {label:<11}{p:5.1f}% +-{se:3.1f}  {bar}\n")
+            out.insert("end", f"  {label:<11}{p:5.1f}% +-{se:3.1f}  {'#' * round(p / 5)}\n")
 
         acc = 100 * accepted / tries if tries else 0
         out.insert("end", f"{accepted} deals  ({tries} tries, {acc:.1f}% accepted)\n")
@@ -403,15 +437,14 @@ class App(tk.Frame):
         line("grand(7)", "grand")
 
         if samples:
-            out.insert("end", "\nSAMPLE PARTNER HANDS\n", "head")
-            out.insert("end", "-" * 32 + "\n")
-            for h, sh, txt, t in samples:
-                out.insert("end", f"  {txt}\n    HCP {h}  shape {tuple(sh)}  "
-                                  f"tricks C{t['C']} D{t['D']} H{t['H']} "
+            out.insert("end", "\nSAMPLE DEALS\n", "head"); out.insert("end", "-" * 32 + "\n")
+            for hands, t in samples:
+                for seat in ORDER:
+                    out.insert("end", f"  {seat} {hands[seat]}\n")
+                out.insert("end", f"    tricks C{t['C']} D{t['D']} H{t['H']} "
                                   f"S{t['S']} NT{t['N']}\n")
         out.see("1.0")
 
-    # ----------------------------------------------------------------- utils
     def _log(self, s, tag=None):
         self.out.insert("end", s, tag or ())
         self.out.see("end")
@@ -425,7 +458,7 @@ class App(tk.Frame):
 def main():
     root = tk.Tk()
     root.title("Bridge MC Simulator  -  Redeal + DDS")
-    root.minsize(430, 560)
+    root.minsize(560, 620)
     App(root)
     root.mainloop()
 

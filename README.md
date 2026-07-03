@@ -116,12 +116,20 @@ library into the frozen app. A GitHub Actions workflow
 python bridge_sim_gui.py
 ```
 
-- Enter your hand (South) in the four suit boxes.
-- Set partner's HCP range and shape:
-  - *Balanced / Semibalanced (fast)* → uses smartstack.
-  - *Custom min-lengths (filter)* → type min length per suit `♠♥♦♣`
-    (e.g. `0 5 4 0` = 5+♥, 4+♦) → uses rejection sampling.
-- Pick a deal count and hit **Run**.
+Each seat (N/E/S/W) has a **Mode**:
+
+- **Random** — dealt at random.
+- **Fixed** — type the exact 13 cards as `♠ ♥ ♦ ♣`, e.g. `AK5 QJT 9432 K8`
+  (`-` for a void).
+- **Constrain** — set an **HCP** range and a **Shape**:
+  - `bal` / `semibal` → balanced/semibalanced (fast — uses smartstack).
+  - `any` → shape unconstrained (HCP only).
+  - four min-lengths `♠ ♥ ♦ ♣`, e.g. `0 5 4 0` = 5+♥ and 4+♦ (rejection sampling).
+
+Smartstack accelerates one balanced/semibalanced constrained seat; any other
+constrained seat is handled by rejection (with a try-cap so impossible
+constraints can't hang). Pick a deal count and hit **Run**. Results show every
+NS game and slam with 95% CIs, plus sample deals.
 
 **Headless examples:**
 
