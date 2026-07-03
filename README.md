@@ -55,6 +55,10 @@ so you can decide whether a slam try is worth it and which strain is the spot.
   board** of bidding the slam.
 - Modern Windows-11 theme (`sv-ttk`) with a light/dark toggle; falls back to a
   clean built-in theme if `sv-ttk` isn't installed.
+- **AI verdict** — an optional **🧠 Explain** button streams a plain-English
+  bridge verdict from Claude (bid slam or stop, the safety net, key drivers).
+  Enabled only when `ANTHROPIC_API_KEY` is set; the simulator itself needs no
+  network or key.
 - Input validation, optional RNG **seed**, sample deals, and a **Stop** button
   (rare constraints can't hang the app).
 - Fast: batched `CalcAllTables` across all cores solves ~32 full deals per DDS

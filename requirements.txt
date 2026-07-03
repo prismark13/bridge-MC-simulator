@@ -6,5 +6,8 @@
 # Optional: modern Windows-11 theme for the GUI (falls back to ttk 'clam').
 sv-ttk
 
+# Optional: enables the "Explain" button (Claude verdict). Needs ANTHROPIC_API_KEY.
+anthropic
+
 # Headless examples under examples/ use endplay (pip-installable, bundles DDS).
 endplay>=0.5

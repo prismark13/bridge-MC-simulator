@@ -38,6 +38,22 @@ try:
 except Exception:
     _HAVE_SV = False
 
+try:
+    import anthropic
+    _HAVE_ANTHROPIC = True
+except Exception:
+    _HAVE_ANTHROPIC = False
+
+AI_MODEL = "claude-opus-4-8"
+AI_SYSTEM = (
+    "You are an expert bridge analyst. You are given the results of a "
+    "double-dummy Monte-Carlo simulation for one deal setup. Give a concise, "
+    "practical verdict (about 120-180 words): whether to bid the slam or stop "
+    "in game, what the safety-net contract is, and the one or two factors that "
+    "most drive the outcome. Use only the numbers provided; do not invent new "
+    "ones. Plain text, no preamble."
+)
+
 # ---------------------------------------------------------------------------
 # Fast double-dummy via DDS's batched CalcAllTables (32 tables/call, all cores)
 # ---------------------------------------------------------------------------
@@ -330,7 +346,10 @@ class App(ttk.Frame):
         master.rowconfigure(0, weight=1)
         self.q = queue.Queue()
         self.worker = None
+        self.ai_worker = None
         self.stop_flag = False
+        self.last_res = None
+        self.last_specs = None
         self.mode, self.hand, self.hlo, self.hhi, self.shp = {}, {}, {}, {}, {}
         self._build()
 
@@ -395,6 +414,9 @@ class App(ttk.Frame):
         self.stop_btn = ttk.Button(act, text="Stop", command=self.stop, state="disabled")
         self.stop_btn.pack(side="left", padx=6)
         ttk.Button(act, text="Copy results", command=self._copy).pack(side="left")
+        self.explain_btn = ttk.Button(act, text="🧠 Explain", command=self._explain,
+                                      state="disabled")
+        self.explain_btn.pack(side="left", padx=6)
         self.prog = ttk.Label(act, text="", foreground="#0a7")
         self.prog.pack(side="left", padx=12)
 
@@ -405,6 +427,7 @@ class App(ttk.Frame):
         self.out.tag_config("warn", foreground="#d33")
         self.out.tag_config("head", font=("Consolas", 10, "bold"))
         self.out.tag_config("good", foreground="#0a7")
+        self.out.tag_config("ai", foreground="#06c")
         self.rowconfigure(4, weight=1)
 
         self._apply_theme(_HAVE_SV and sv_ttk.get_theme() or "light")
@@ -466,6 +489,8 @@ class App(ttk.Frame):
         n_samples = 6 if self.samples_var.get() else 0
         side = self.side.get()
         vul = self.vul.get() == "Vul"
+        self.last_specs = specs
+        self.explain_btn.config(state="disabled")
         args = (specs, n, max_tries, self.seed.get().strip(), side, vul, n_samples)
         self.worker = threading.Thread(target=self._work, args=args, daemon=True)
         self.worker.start()
@@ -508,12 +533,15 @@ class App(ttk.Frame):
         self.run_btn.config(state="normal"); self.stop_btn.config(state="disabled")
         if why == "done":
             self.prog.config(text="done.")
+            if self.last_res and _HAVE_ANTHROPIC and os.environ.get("ANTHROPIC_API_KEY"):
+                self.explain_btn.config(state="normal")
 
     def _report(self, res, want):
         out = self.out
         if res["n"] == 0:
             self._log("No qualifying deals — the constraints may be impossible.\n", "warn")
             return
+        self.last_res = res
         n, tries = res["n"], res["tries"]
         make, score = res["make"], res["score"]
         if n < want:
@@ -568,6 +596,79 @@ class App(ttk.Frame):
         self.clipboard_clear()
         self.clipboard_append(self.out.get("1.0", "end").rstrip())
         self.prog.config(text="results copied to clipboard.")
+
+    # ----------------------------------------------------- AI explanation
+    def _ai_prompt(self):
+        res, specs = self.last_res, self.last_specs or {}
+
+        def seat(s):
+            sp = specs.get(s, ("random",))
+            if sp[0] == "fixed":
+                return f"{s}: {sp[1]}"
+            if sp[0] == "con":
+                _, lo, hi, kind, mins = sp
+                sh = kind if kind != "minlen" else "min " + "/".join(map(str, mins))
+                return f"{s}: {lo}-{hi} HCP, {sh}"
+            return f"{s}: random"
+
+        n = res["n"]
+        L = [f"Double-dummy Monte-Carlo, {n} deals. Analysing {res['side']}, "
+             f"{'vulnerable' if res['vul'] else 'non-vul'}.", "Hands:"]
+        L += ["  " + seat(s) for s in ORDER]
+        L.append("Contract  make%  avgScore:")
+        for lab, strain, need, cs in GAMES + SLAMS:
+            L.append(f"  {lab:<4} {100*res['make'][lab]/n:4.0f}%  {res['score'][lab]/n:+5.0f}")
+        L.append(f"  any game {100*res['make']['any game']/n:.0f}%, "
+                 f"any slam {100*res['make']['any slam']/n:.0f}%, "
+                 f"grand {100*res['make']['grand']/n:.0f}%")
+        bg, bgev = res["best_game"]; bs, bsev = res["best_slam"]
+        imp = f", {res['imp']:+.2f} IMP/board" if res.get("imp") is not None else ""
+        L.append(f"Best game {bg} EV {bgev:+.0f}; best slam {bs} EV {bsev:+.0f}; "
+                 f"slam vs game {res['ev_diff']:+.0f} pts{imp}.")
+        L.append("Give the verdict.")
+        return "\n".join(L)
+
+    def _explain(self):
+        if not self.last_res:
+            return
+        self.explain_btn.config(state="disabled")
+        self.prog.config(text="asking Claude…")
+        self.out.insert("end", "\n\n── AI verdict ──\n", "head")
+        prompt = self._ai_prompt()
+        self.ai_worker = threading.Thread(target=self._ai_work, args=(prompt,), daemon=True)
+        self.ai_worker.start()
+        self.after(80, self._poll_ai)
+
+    def _ai_work(self, prompt):
+        try:
+            client = anthropic.Anthropic()
+            with client.messages.stream(
+                model=AI_MODEL, max_tokens=1024, system=AI_SYSTEM,
+                messages=[{"role": "user", "content": prompt}],
+            ) as stream:
+                for text in stream.text_stream:
+                    self.q.put(("ai", text))
+            self.q.put(("ai_done",))
+        except Exception as e:
+            self.q.put(("ai_err", repr(e)))
+
+    def _poll_ai(self):
+        try:
+            while True:
+                m = self.q.get_nowait()
+                if m[0] == "ai":
+                    self.out.insert("end", m[1], "ai"); self.out.see("end")
+                elif m[0] == "ai_done":
+                    self.prog.config(text="AI verdict done.")
+                    self.explain_btn.config(state="normal")
+                elif m[0] == "ai_err":
+                    self.out.insert("end", f"\n[AI error: {m[1]}]\n", "warn")
+                    self.prog.config(text="AI error.")
+                    self.explain_btn.config(state="normal")
+        except queue.Empty:
+            pass
+        if self.ai_worker and self.ai_worker.is_alive():
+            self.after(80, self._poll_ai)
 
 
 def main():
