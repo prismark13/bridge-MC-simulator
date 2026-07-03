@@ -86,7 +86,7 @@ python -m pip install endplay
 ## Standalone app (no Python needed)
 
 Prefer a double-click app? Grab the packaged build from the
-[Releases](https://github.com/prismark13/bridge-slam-sim/releases) page
+[Releases](https://github.com/prismark13/bridge-MC-simulator/releases) page
 (`BridgeSlamSim.exe` on Windows) — it bundles Python, Tk, Redeal and the DDS
 solver into one file, so end users install nothing.
 
