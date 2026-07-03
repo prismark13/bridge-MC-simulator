@@ -5,6 +5,9 @@ on:
     tags: ["v*"]
   workflow_dispatch:
 
+permissions:
+  contents: write               # allow the release step to upload assets
+
 jobs:
   build:
     strategy:
