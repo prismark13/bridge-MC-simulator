@@ -1,4 +1,4 @@
-# Bridge Slam Simulator
+# Bridge MC Simulator
 
 A small Monte-Carlo tool for **bridge bidding analysis**. You fix your own hand,
 constrain partner by HCP and shape, and it generates thousands of deals and
@@ -87,20 +87,20 @@ python -m pip install endplay
 
 Prefer a double-click app? Grab the packaged build from the
 [Releases](https://github.com/prismark13/bridge-MC-simulator/releases) page
-(`BridgeSlamSim.exe` on Windows) — it bundles Python, Tk, Redeal and the DDS
+(`BridgeMCSimulator.exe` on Windows) — it bundles Python, Tk, Redeal and the DDS
 solver into one file, so end users install nothing.
 
 Build it yourself:
 
 ```powershell
 # Windows
-powershell -ExecutionPolicy Bypass -File build.ps1        # -> dist\BridgeSlamSim.exe
+powershell -ExecutionPolicy Bypass -File build.ps1        # -> dist\BridgeMCSimulator.exe
 ```
 ```sh
 # macOS / Linux
 python -m pip install pyinstaller "git+https://github.com/anntzer/redeal"
-pyinstaller --noconfirm --onefile --windowed --name BridgeSlamSim \
-    --collect-all redeal bridge_sim_gui.py                 # -> dist/BridgeSlamSim
+pyinstaller --noconfirm --onefile --windowed --name BridgeMCSimulator \
+    --collect-all redeal bridge_sim_gui.py                 # -> dist/BridgeMCSimulator
 ```
 
 The `--collect-all redeal` flag is essential: it pulls Redeal's bundled DDS

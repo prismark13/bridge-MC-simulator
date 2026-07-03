@@ -29,12 +29,12 @@ jobs:
           python -m pip install "git+https://github.com/anntzer/redeal"
 
       - name: Build standalone app
-        run: pyinstaller --noconfirm --onefile --windowed --name BridgeSlamSim --collect-all redeal bridge_sim_gui.py
+        run: pyinstaller --noconfirm --onefile --windowed --name BridgeMCSimulator --collect-all redeal bridge_sim_gui.py
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: BridgeSlamSim-${{ runner.os }}
+          name: BridgeMCSimulator-${{ runner.os }}
           path: dist/*
 
       - name: Attach to GitHub Release (on tag)

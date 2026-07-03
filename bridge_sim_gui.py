@@ -424,7 +424,7 @@ class App(tk.Frame):
 
 def main():
     root = tk.Tk()
-    root.title("Bridge Slam Simulator  -  Redeal + DDS")
+    root.title("Bridge MC Simulator  -  Redeal + DDS")
     root.minsize(430, 560)
     App(root)
     root.mainloop()
