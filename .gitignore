@@ -19,3 +19,6 @@ Thumbs.db
 
 # Local artifacts
 *.log
+
+# Secret: your Anthropic API key (used by run_with_ai.bat) — never commit
+apikey.txt

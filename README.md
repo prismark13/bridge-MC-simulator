@@ -58,7 +58,8 @@ so you can decide whether a slam try is worth it and which strain is the spot.
 - **AI verdict** — an optional **🧠 Explain** button streams a plain-English
   bridge verdict from Claude (bid slam or stop, the safety net, key drivers).
   Enabled only when `ANTHROPIC_API_KEY` is set; the simulator itself needs no
-  network or key.
+  network or key. Easiest way to enable it: paste your key into `apikey.txt`
+  (git-ignored) and double-click **`run_with_ai.bat`** (Windows).
 - Input validation, optional RNG **seed**, sample deals, and a **Stop** button
   (rare constraints can't hang the app).
 - Fast: batched `CalcAllTables` across all cores solves ~32 full deals per DDS
