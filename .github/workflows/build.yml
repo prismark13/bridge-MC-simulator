@@ -34,14 +34,24 @@ jobs:
       - name: Build standalone app
         run: pyinstaller --noconfirm --onefile --windowed --name BridgeMCSimulator --collect-all redeal --collect-all sv_ttk --collect-all anthropic bridge_sim_gui.py
 
+      - name: Name binary per-OS (avoid release asset collisions)
+        shell: bash
+        run: |
+          mkdir -p out
+          case "${{ runner.os }}" in
+            Windows) cp dist/BridgeMCSimulator.exe out/BridgeMCSimulator.exe ;;
+            Linux)   cp dist/BridgeMCSimulator     out/BridgeMCSimulator-linux ;;
+            macOS)   cp dist/BridgeMCSimulator     out/BridgeMCSimulator-macos ;;
+          esac
+
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: BridgeMCSimulator-${{ runner.os }}
-          path: dist/*
+          path: out/*
 
       - name: Attach to GitHub Release (on tag)
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*
+          files: out/*
