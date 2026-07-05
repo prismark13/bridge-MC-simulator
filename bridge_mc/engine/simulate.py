@@ -225,13 +225,6 @@ def run(config, solver=None, progress=lambda a, t: None, stop=lambda: False):
     U = _stats(us, accepted)
     T = _stats(them, accepted)
 
-    # Profile the contract actually in question for our side: the slam if live,
-    # otherwise the game. Skip entirely when our best contract is essentially
-    # unmakeable (a competitive/defensive deal) — profiling it would mislead.
-    target = U["best_slam"] if U["best_slam"].make_rate >= 12 else U["best_game"]
-    breakdown = (_breakdown(focus, target.label, fhcp, fshape, fst)
-                 if focus and fhcp and target.make_rate >= 20 else None)
-
     par = Par(avg_us=par_sum / accepted, sac_rate=par_sac / accepted,
               top=par_ctr.most_common(3))
 
@@ -242,6 +235,14 @@ def run(config, solver=None, progress=lambda a, t: None, stop=lambda: False):
         zone = "game"
     else:
         zone = "competitive"
+
+    # Breakdown only on constructive (slam/game) deals, profiling OUR hand: the
+    # slam when it's a live invitation (>=12%), otherwise the game.
+    if zone in ("slam", "game") and focus and fhcp:
+        target = U["best_slam"] if U["best_slam"].make_rate >= 12 else U["best_game"]
+        breakdown = _breakdown(focus, target.label, fhcp, fshape, fst)
+    else:
+        breakdown = None
 
     sacrifice = Sacrifice(
         opp_game=sac_opp.most_common(1)[0][0] if sac_opp else "",

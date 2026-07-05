@@ -51,7 +51,15 @@ def build_prompt(result, question: str = "") -> str:
                 rng(sp.mins[i], sp.maxs[i]) for i in range(4))
         else:
             sh = sp.shape
-        return f"{s}: {sp.lo}-{sp.hi} HCP, {sh}"
+        hon = []
+        for suit, named, xc in sp.holdings:
+            hon.append(f'{"".join(named)}{"x" * xc} of {suit}')
+        for suit, n, m in sp.tops:
+            hon.append(f"{n} of top {m} in {suit}")
+        if sp.ctrl_lo > 0 or sp.ctrl_hi < 12:
+            hon.append(f"{sp.ctrl_lo}-{sp.ctrl_hi} controls")
+        honstr = ("; honours " + ", ".join(hon)) if hon else ""
+        return f"{s}: {sp.lo}-{sp.hi} HCP, {sh}{honstr}"
 
     def contracts(games, slams):
         return ", ".join(f"{c.label} {c.make_rate:.0f}% ({c.avg_score:+.0f})"

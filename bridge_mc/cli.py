@@ -33,7 +33,7 @@ def build_config(args):
         raw[seat] = {"mode": "Constrain", "hand": "", "lo": lo, "hi": hi, "shape": shape}
     specs = build_specs(raw)
     smart = smart_seat(specs)
-    rej = any(sp.kind == "con" and s != smart and sp.constrains
+    rej = any(sp.kind == "con" and ((s != smart and sp.constrains) or sp.has_honors)
               for s, sp in specs.items())
     max_tries = max(args.deals * 500, 2_000_000) if rej else args.deals
     return SimConfig(specs=specs, n=args.deals, max_tries=max_tries,

@@ -44,10 +44,12 @@ hands should accept a slam try and which should sign off.
 **Features**
 
 - **Per-seat input:** every seat (N/E/S/W) can be Random, a Fixed hand, or
-  Constrained (HCP + shape). A **card picker** builds fixed hands click-by-click
-  and blocks any card already used in another hand. Shapes take per-suit ranges:
-  `5`/`5+` (minimum), `3-5` (range), `0-2` (maximum), `x` (any) — e.g.
-  `3-5 5+ 0-4 x`.
+  Constrained (HCP + shape + honours). A **card picker** builds fixed hands
+  click-by-click (with a live preview) and blocks any card already used in
+  another hand. Shapes take per-suit ranges: `5`/`5+` (minimum), `3-5` (range),
+  `0-2` (maximum), `x` (any) — e.g. `3-5 5+ 0-4 x`.
+- **Honour constraints** per seat: specific holdings (`DAK`, `HQxx`, `Sxx`),
+  N-of-top-M (`H2/3` = 2 of the top 3 hearts), and controls (`ctrl3+`).
 - **Both sides, every run:** make-rates for you *and* the opponents at game and
   slam level, plus grand-slam rate, average score, and the **expected IMP gain**
   of bidding the slam.
@@ -125,10 +127,12 @@ Each seat (N/E/S/W) has a **Mode**:
 
 - **Random** — dealt at random.
 - **Fixed** — the exact 13 cards as `♠ ♥ ♦ ♣`, e.g. `AK5 QJT 9432 K8` (`-` void).
-- **Constrain** — an **HCP** range and a **Shape**:
-  - `bal` / `semibal` → balanced / semi-balanced.
-  - `any` → shape unconstrained (HCP only).
-  - four min-lengths `♠ ♥ ♦ ♣`, e.g. `0 5 4 0` = 5+♥ and 4+♦.
+- **Constrain** — an **HCP** range, a **Shape**, and optional **Honours**:
+  - Shape: `bal` / `semibal`, `any`, or four per-suit lengths `♠ ♥ ♦ ♣` where
+    each is a min (`5`/`5+`), a range (`3-5`), a max (`0-2`), or any (`x`) —
+    e.g. `0 5 4 0` = 5+♥ 4+♦, or `3-5 5+ 0-4 x`.
+  - Honours (space-separated): holdings `DAK` / `HQxx` / `Sxx`, N-of-top-M
+    `H2/3` (2 of the top 3 hearts), and controls `ctrl3+` / `ctrl3-5`.
 
 One constrained seat is importance-sampled (any of the shapes above); pick a deal
 count and hit **Run**.

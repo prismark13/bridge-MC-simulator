@@ -84,6 +84,69 @@ def parse_shape(text):
                      "like '0 5 4 0' or '3-5 5+ 0-4 x'")
 
 
+def _num_range(s, dflo, dfhi):
+    s = s.strip()
+    if not s:
+        return dflo, dfhi
+    if s.endswith("+"):
+        return int(s[:-1]), dfhi
+    if "-" in s:
+        a, b = s.split("-", 1)
+        return int(a), int(b)
+    return int(s), int(s)
+
+
+def parse_honors(text):
+    """-> (holdings, tops, (ctrl_lo, ctrl_hi)).
+
+    Tokens (space/comma separated), each scoped to a suit S/H/D/C:
+      'DAK'    holding: has the named cards (♦A, ♦K)
+      'HQxx'   holding: has ♥Q plus at least two small cards (x = a 2-9 spot)
+      'Sxx'    holding: at least two small spades
+      'H2/3'   at least 2 of the top 3 in hearts (any 2 of A/K/Q)
+      'ctrl3-5' / 'ctrl3+' / 'ctrl3'   controls (A=2, K=1) range
+
+    A holding is stored as (suit, named_ranks, x_count).
+    """
+    t = (text or "").strip()
+    if not t:
+        return (), (), (0, 12)
+    holdings, tops = [], []
+    clo, chi = 0, 12
+    for raw in t.replace(",", " ").split():
+        tok = raw.strip().upper()
+        if not tok:
+            continue
+        if tok.startswith("CTRL"):
+            clo, chi = _num_range(tok[4:].lstrip(":"), 0, 12)
+            if not (0 <= clo <= chi <= 12):
+                raise ValueError(f"bad controls {raw!r}")
+        elif "/" in tok and tok[:1] in "SHDC":
+            suit = tok[0]
+            n, _, m = tok[1:].partition("/")
+            try:
+                n, m = int(n), int(m)
+            except ValueError:
+                raise ValueError(f"bad honor spec {raw!r}")
+            if not (1 <= n <= m <= 13):
+                raise ValueError(f"bad honor spec {raw!r}")
+            tops.append((suit, n, m))
+        elif len(tok) >= 2 and tok[0] in "SHDC":
+            suit = tok[0]
+            named, xc = [], 0
+            for ch in tok[1:]:
+                if ch == "X":
+                    xc += 1
+                elif ch in RANKS:
+                    named.append(ch)
+                else:
+                    raise ValueError(f"bad card in {raw!r}")
+            holdings.append((suit, tuple(named), xc))
+        else:
+            raise ValueError(f"bad honor token {raw!r}")
+    return tuple(holdings), tuple(tops), (clo, chi)
+
+
 def build_specs(raw):
     """Validate raw per-seat inputs into ``dict[str, SeatSpec]``.
 
@@ -111,7 +174,12 @@ def build_specs(raw):
                 kind, mins, maxs = parse_shape(r["shape"])
             except ValueError as e:
                 raise ValueError(f"{seat} shape: {e}")
-            specs[seat] = SeatSpec.constrained(lo, hi, kind, mins, maxs)
+            try:
+                holdings, tops, ctrl = parse_honors(r.get("honors", ""))
+            except ValueError as e:
+                raise ValueError(f"{seat} honors: {e}")
+            specs[seat] = SeatSpec.constrained(lo, hi, kind, mins, maxs,
+                                               holdings, tops, ctrl)
         else:
             specs[seat] = SeatSpec.random()
     return specs

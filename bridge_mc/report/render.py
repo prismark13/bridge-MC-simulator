@@ -58,6 +58,18 @@ def _len_label(mn, mx, sym):
     return f"{mn}-{mx}{sym}"
 
 
+def _honor_desc(sp):
+    bits = []
+    for suit, named, xc in sp.holdings:
+        bits.append(f'{"".join(named)}{"x" * xc}{SUIT_SYM[suit]}')
+    for suit, n, m in sp.tops:
+        bits.append(f'{n} of top {m}{SUIT_SYM[suit]}')
+    if sp.ctrl_lo > 0 or sp.ctrl_hi < 12:
+        bits.append(f'{sp.ctrl_lo}+ ctrl' if sp.ctrl_hi >= 12
+                    else f'{sp.ctrl_lo}-{sp.ctrl_hi} ctrl')
+    return " · ".join(bits)
+
+
 def _seat_spec(sp):
     if sp.kind == "fixed":
         return "Fixed", _hand_html(_symify(sp.fixed)), ""
@@ -68,7 +80,9 @@ def _seat_spec(sp):
         else:
             shp = {"any": "any shape", "bal": "balanced",
                    "semibal": "semi-balanced"}[sp.shape]
-        return "Constrained", f"{sp.lo}–{sp.hi} HCP", shp
+        hon = _honor_desc(sp)
+        meta = f"{shp} · {hon}" if hon and shp != "any shape" else (hon or shp)
+        return "Constrained", f"{sp.lo}–{sp.hi} HCP", meta
     return "Random", "—", ""
 
 

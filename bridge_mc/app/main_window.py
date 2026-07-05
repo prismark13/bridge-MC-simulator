@@ -24,15 +24,15 @@ from .theming import apply_palette
 from .workers import AiWorker, SimWorker
 
 DEFAULTS = {
-    "N": ("Constrain", "", 7, 10, "3 5 0 0"),
-    "E": ("Fixed", "T74 2 QT5 KQ8632", 0, 37, "any"),
-    "S": ("Constrain", "", 11, 14, "5 3 0 0"),
-    "W": ("Constrain", "", 11, 16, "0 0 5 0"),
+    "N": ("Constrain", "", 11, 18, "3-5 3-5 1-3 0"),
+    "E": ("Random", "", 0, 37, "any"),
+    "S": ("Fixed", "876 AJT65 A7 K76", 11, 14, "5 3 0 0"),
+    "W": ("Constrain", "", 3, 10, "0 0 5-7 0"),
 }
-DEFAULT_SIDE = "EW"
+DEFAULT_SIDE = "NS"
 DEFAULT_VUL = "Both"
 DEFAULT_DEALS = 2000
-DEFAULT_ASK = "Should East bid on over 4S or pass"
+DEFAULT_ASK = "should South bid over 5H by North"
 MODES = ["Random", "Fixed", "Constrain"]
 
 
@@ -40,7 +40,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Bridge MC Simulator")
-        self.resize(940, 820)
+        self.resize(1040, 820)
         self.setMinimumSize(720, 640)
         self.theme = "light"
         self.sim = None
@@ -48,6 +48,7 @@ class MainWindow(QMainWindow):
         self.last_result = None
         self.last_html = None
         self.mode, self.hand, self.hlo, self.hhi, self.shp = {}, {}, {}, {}, {}
+        self.hon = {}
         self._build()
         apply_palette(QApplication.instance(), "light")
 
@@ -73,8 +74,8 @@ class MainWindow(QMainWindow):
         hint = QLabel("Fixed: click 'Cards…' or type '♠ ♥ ♦ ♣' e.g. AK5 QJT 9432 K8      "
                       "Shape: bal / semibal / any / lengths '0 5 4 0' or '3-5 5+ 0-4 x'")
         hint.setStyleSheet("color:#888;")
-        g.addWidget(hint, 0, 0, 1, 8)
-        for c, h in enumerate(["", "Mode", "Fixed hand", "HCP", "", "", "Shape"]):
+        g.addWidget(hint, 0, 0, 1, 9)
+        for c, h in enumerate(["", "Mode", "Fixed hand", "HCP", "", "", "Shape", "Honors"]):
             lbl = QLabel(h); lbl.setStyleSheet("font-weight:600;")
             g.addWidget(lbl, 1, c)
         for i, seat in enumerate(ORDER, start=2):
@@ -93,10 +94,15 @@ class MainWindow(QMainWindow):
             g.addWidget(shi, i, 5); self.hhi[seat] = shi
             es = QLineEdit(shp); es.setMaximumWidth(110)
             g.addWidget(es, i, 6); self.shp[seat] = es
+            eh = QLineEdit(); eh.setMaximumWidth(120)
+            eh.setPlaceholderText("DAK H2/3 ctrl3+")
+            eh.setToolTip("Holdings: 'DAK', 'HQxx', 'Sxx'; 'H2/3' = 2 of top 3; "
+                          "'ctrl3-5' = controls")
+            g.addWidget(eh, i, 7); self.hon[seat] = eh
             pick = QPushButton("Cards…"); pick.setMaximumWidth(64)
             pick.setToolTip("Pick a fixed hand — cards used elsewhere are blocked")
             pick.clicked.connect(lambda _=False, s=seat: self._pick_cards(s))
-            g.addWidget(pick, i, 7)
+            g.addWidget(pick, i, 8)
         g.setColumnStretch(2, 1)
         root.addWidget(hands)
 
@@ -132,6 +138,9 @@ class MainWindow(QMainWindow):
         self.run_btn.clicked.connect(self.run); act.addWidget(self.run_btn)
         self.stop_btn = QPushButton("Stop"); self.stop_btn.setEnabled(False)
         self.stop_btn.clicked.connect(self.stop); act.addWidget(self.stop_btn)
+        self.reset_btn = QPushButton("Reset")
+        self.reset_btn.setToolTip("Restore the default hands and clear the report")
+        self.reset_btn.clicked.connect(self._reset); act.addWidget(self.reset_btn)
         self.save_btn = QPushButton("Save…")
         self.save_btn.clicked.connect(self._save); self.save_btn.setEnabled(False)
         act.addWidget(self.save_btn)
@@ -190,12 +199,36 @@ class MainWindow(QMainWindow):
         m = self.mode[seat].currentText()
         self.hand[seat].setEnabled(m == "Fixed")
         con = m == "Constrain"
-        for w in (self.hlo[seat], self.hhi[seat], self.shp[seat]):
+        for w in (self.hlo[seat], self.hhi[seat], self.shp[seat], self.hon[seat]):
             w.setEnabled(con)
 
     def _vul_state(self):
         label = self.vul.currentText()
         return next((v for v in VUL_STATES if VUL_LABEL[v] == label), "None")
+
+    def _reset(self):
+        for seat in ORDER:
+            m, hnd, lo, hi, shp = DEFAULTS[seat]
+            self.mode[seat].setCurrentText(m)
+            self.hand[seat].setText(hnd)
+            self.hlo[seat].setValue(lo); self.hhi[seat].setValue(hi)
+            self.shp[seat].setText(shp)
+            self.hon[seat].clear()
+            self._sync(seat)
+        self.side.setCurrentText(DEFAULT_SIDE)
+        self.vul.setCurrentText(VUL_LABEL[DEFAULT_VUL])
+        self.ndeals.setValue(DEFAULT_DEALS)
+        self.seed.clear()
+        self.samples_cb.setChecked(True)
+        self.auto_cb.setChecked(False)
+        self.ask.setText(DEFAULT_ASK)
+        self.last_result = None
+        self.last_html = None
+        for b in (self.save_btn, self.browser_btn, self.explain_btn):
+            b.setEnabled(False)
+        self.report.setHtml(self._placeholder("Run a simulation to see the report."))
+        self._set_log("")
+        self.prog.setText("reset.")
 
     def _cards_of(self, text):
         """Lenient parse of a (possibly partial) hand -> set of (suit, rank)."""
@@ -226,7 +259,8 @@ class MainWindow(QMainWindow):
         raw = {seat: {"mode": self.mode[seat].currentText(),
                       "hand": self.hand[seat].text(),
                       "lo": self.hlo[seat].value(), "hi": self.hhi[seat].value(),
-                      "shape": self.shp[seat].text()} for seat in ORDER}
+                      "shape": self.shp[seat].text(),
+                      "honors": self.hon[seat].text()} for seat in ORDER}
         try:
             specs = build_specs(raw)
         except ValueError as e:
@@ -235,14 +269,21 @@ class MainWindow(QMainWindow):
 
         n = self.ndeals.value()
         smart = smart_seat(specs)
-        rej_present = any(sp.kind == "con" and seat != smart and sp.constrains
-                          for seat, sp in specs.items())
+        rej_present = any(
+            sp.kind == "con" and ((seat != smart and sp.constrains) or sp.has_honors)
+            for seat, sp in specs.items())
         max_tries = max(n * 500, 2_000_000) if rej_present else n
         config = SimConfig(
             specs=specs, n=n, max_tries=max_tries, seed=self.seed.text().strip(),
             side=self.side.currentText(), vul=self._vul_state(),
             n_samples=6 if self.samples_cb.isChecked() else 0)
 
+        # Clear the previous analysis so stale results aren't shown mid-run.
+        self.last_result = None
+        self.last_html = None
+        self.save_btn.setEnabled(False)
+        self.browser_btn.setEnabled(False)
+        self.report.setHtml(self._placeholder("Simulating…"))
         self._set_log("preparing…")
         self.run_btn.setEnabled(False); self.stop_btn.setEnabled(True)
         self.explain_btn.setEnabled(False); self.prog.setText("preparing…")

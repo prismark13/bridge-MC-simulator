@@ -3,6 +3,7 @@
 Cards already assigned to another seat are shown disabled, so the same card
 can never be dealt twice. OK is enabled only on a legal 13-card hand.
 """
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QGridLayout, QHBoxLayout, QLabel, QPushButton,
     QVBoxLayout)
@@ -12,6 +13,8 @@ from ..domain.contracts import SUIT_SYM, SUITS
 RANKS = list("AKQJT98765432")
 _HCP = {"A": 4, "K": 3, "Q": 2, "J": 1}
 _RED = "#b0243a"
+_SEL = "#2c7a50"        # green highlight for a selected card
+_ORDER = {r: i for i, r in enumerate(RANKS)}
 
 
 class CardPicker(QDialog):
@@ -29,6 +32,13 @@ class CardPicker(QDialog):
         info.setStyleSheet("color:#888;")
         root.addWidget(info)
 
+        # Live preview of the hand as it's built up, card by card.
+        self.preview = QLabel()
+        self.preview.setTextFormat(Qt.TextFormat.RichText)
+        self.preview.setStyleSheet(
+            "font-family:Consolas,monospace;font-size:18px;padding:6px 2px;")
+        root.addWidget(self.preview)
+
         grid = QGridLayout()
         grid.setHorizontalSpacing(3)
         grid.setVerticalSpacing(3)
@@ -42,8 +52,12 @@ class CardPicker(QDialog):
                 b = QPushButton("10" if rank == "T" else rank)
                 b.setCheckable(True)
                 b.setFixedSize(36, 30)
-                if suit in ("H", "D"):
-                    b.setStyleSheet(f"color:{_RED};")
+                base = f"color:{_RED};" if suit in ("H", "D") else ""
+                b.setStyleSheet(
+                    f"QPushButton{{{base}font-weight:600}}"
+                    f"QPushButton:checked{{background:{_SEL};color:#fff;"
+                    f"border:1px solid {_SEL};font-weight:700}}"
+                    "QPushButton:disabled{color:#888}")
                 if card in self.used:
                     b.setEnabled(False)
                     b.setToolTip(f"already in {self.used[card]}'s hand")
@@ -75,10 +89,12 @@ class CardPicker(QDialog):
     def _toggle(self, card):
         if card in self.selected:
             self.selected.discard(card)
+            self.buttons[card].setChecked(False)
         elif len(self.selected) < 13:
             self.selected.add(card)
+            self.buttons[card].setChecked(True)
         else:
-            self.buttons[card].setChecked(False)   # at 13 already
+            self.buttons[card].setChecked(False)   # at 13 already — revert
         self._refresh()
 
     def _clear(self):
@@ -95,12 +111,22 @@ class CardPicker(QDialog):
         shape = "-".join(str(counts[s]) for s in SUITS)
         self.count.setText(f"{n}/13 cards   {hcp} HCP   shape {shape}")
         self.ok.setEnabled(n == 13)
+        self.preview.setText(self._preview_html())
+
+    def _preview_html(self):
+        cells = []
+        for s in SUITS:
+            rs = sorted((r for (su, r) in self.selected if su == s),
+                        key=lambda r: _ORDER[r])
+            txt = "".join("10" if r == "T" else r for r in rs) or "—"
+            col = f' style="color:{_RED}"' if s in ("H", "D") else ""
+            cells.append(f'<span{col}>{SUIT_SYM[s]}&nbsp;{txt}</span>')
+        return "&nbsp;&nbsp;&nbsp;".join(cells)
 
     def hand_string(self):
-        order = {r: i for i, r in enumerate(RANKS)}
         parts = []
         for s in SUITS:
             rs = sorted((r for (su, r) in self.selected if su == s),
-                        key=lambda r: order[r])
+                        key=lambda r: _ORDER[r])
             parts.append("".join(rs) or "-")
         return " ".join(parts)

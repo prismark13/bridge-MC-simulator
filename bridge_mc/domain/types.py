@@ -25,6 +25,10 @@ class SeatSpec:
     shape: str = "any"                    # "any" | "bal" | "semibal" | "minlen"
     mins: tuple = (0, 0, 0, 0)            # S/H/D/C minimum lengths when shape == "minlen"
     maxs: tuple = (13, 13, 13, 13)        # S/H/D/C maximum lengths when shape == "minlen"
+    holdings: tuple = ()                  # (suit, named_ranks, x_count) required holdings
+    tops: tuple = ()                      # (suit, n, m): n of the top m in a suit
+    ctrl_lo: int = 0                      # controls (A=2, K=1) range
+    ctrl_hi: int = 12
 
     @staticmethod
     def random() -> "SeatSpec":
@@ -35,16 +39,23 @@ class SeatSpec:
         return SeatSpec("fixed", fixed=hand)
 
     @staticmethod
-    def constrained(lo: int, hi: int, shape: str, mins, maxs=None) -> "SeatSpec":
+    def constrained(lo: int, hi: int, shape: str, mins, maxs=None,
+                    holdings=(), tops=(), ctrl=(0, 12)) -> "SeatSpec":
         return SeatSpec("con", lo=lo, hi=hi, shape=shape, mins=tuple(mins),
-                        maxs=tuple(maxs) if maxs is not None else (13, 13, 13, 13))
+                        maxs=tuple(maxs) if maxs is not None else (13, 13, 13, 13),
+                        holdings=tuple(holdings), tops=tuple(tops),
+                        ctrl_lo=ctrl[0], ctrl_hi=ctrl[1])
+
+    @property
+    def has_honors(self) -> bool:
+        return bool(self.holdings or self.tops or self.ctrl_lo > 0 or self.ctrl_hi < 12)
 
     @property
     def constrains(self) -> bool:
         """True if this seat imposes a filter beyond 'any 0-37'."""
         return self.kind == "con" and (
             self.lo > 0 or self.hi < 37 or self.shape != "any"
-            or any(self.mins) or any(m < 13 for m in self.maxs))
+            or any(self.mins) or any(m < 13 for m in self.maxs) or self.has_honors)
 
 
 @dataclass(frozen=True)

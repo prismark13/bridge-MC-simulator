@@ -25,3 +25,6 @@ apikey.txt
 
 # PyInstaller generated spec
 *.spec
+
+# Saved reports from the Save button
+bridge-mc-*.html

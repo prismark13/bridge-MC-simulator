@@ -7,9 +7,36 @@ balanced/semi-balanced hands **and** minimum-length hands like '5+ hearts,
 """
 from redeal import Deal, H, Shape, SmartStack, balanced, hcp, semibalanced
 
-from ..domain.contracts import ATTR, SUITS, SUIT_SYM
+from ..domain.contracts import ATTR, RANKS, SUITS, SUIT_SYM
 
 SHAPE_TEST = {"bal": balanced, "semibal": semibalanced}
+_SUIT_ATTR = {"S": "spades", "H": "hearts", "D": "diamonds", "C": "clubs"}
+_SMALL = "98765432"
+
+
+def honors_ok(sp, hand) -> bool:
+    """Does ``hand`` satisfy the seat's holding / top-of-suit / controls honours?"""
+    if not sp.has_honors:
+        return True
+    h = {s: str(getattr(hand, _SUIT_ATTR[s])) for s in "SHDC"}
+    for suit, named, xc in sp.holdings:
+        hh = h[suit]
+        for r in named:
+            if r not in hh:
+                return False
+        if xc:
+            smalls = sum(1 for r in hh if r in _SMALL and r not in named)
+            if smalls < xc:
+                return False
+    for suit, n, m in sp.tops:
+        if sum(1 for r in RANKS[:m] if r in h[suit]) < n:
+            return False
+    if sp.ctrl_lo > 0 or sp.ctrl_hi < 12:
+        aces = sum(1 for s in "SHDC" if "A" in h[s])
+        kings = sum(1 for s in "SHDC" if "K" in h[s])
+        if not (sp.ctrl_lo <= 2 * aces + kings <= sp.ctrl_hi):
+            return False
+    return True
 
 
 def fmt_hand(hand) -> str:
@@ -54,6 +81,10 @@ def build_dealer(config):
         predeal[smart] = SmartStack(_shape_for(sp), hcp, range(sp.lo, sp.hi + 1))
     rej = [(seat, sp) for seat, sp in specs.items()
            if sp.kind == "con" and seat != smart and sp.constrains]
+    # Honours aren't handled by SmartStack, so check them on every constrained
+    # seat (including the smart one) by rejection.
+    hon = [(seat, sp) for seat, sp in specs.items()
+           if sp.kind == "con" and sp.has_honors]
 
     def accept(deal):
         for seat, sp in rej:
@@ -66,6 +97,9 @@ def build_dealer(config):
                 sh = hand.shape
                 if any(sh[i] < sp.mins[i] or sh[i] > sp.maxs[i] for i in range(4)):
                     return False
+        for seat, sp in hon:
+            if not honors_ok(sp, getattr(deal, ATTR[seat])):
+                return False
         return True
 
     return Deal.prepare(predeal), accept
