@@ -30,20 +30,27 @@ def render_text(result) -> str:
     for s in result.slams:
         row(s)
     row(result.any_slam)
+    L.append("GRANDS")
+    for s in result.grands:
+        row(s)
     row(result.grand)
 
-    bg, bs = result.best_game, result.best_slam
+    bg, bs, gr = result.best_game, result.best_slam, result.best_grand
     og = result.opp_best_game
     competitive = og is not None and max(bg.make_rate, bs.make_rate) < 50 \
         and og.make_rate >= 50
     L.append("\nBIDDING DECISION")
     L.append(f"  best game : {bg.label:<4} {bg.make_rate:4.0f}%  EV {bg.avg_score:+.0f}")
     L.append(f"  best slam : {bs.label:<4} {bs.make_rate:4.0f}%  EV {bs.avg_score:+.0f}")
+    L.append(f"  best grand: {gr.label:<4} {gr.make_rate:4.0f}%  EV {gr.avg_score:+.0f}")
     imp = f",  {result.imp:+.2f} IMP/board" if result.imp is not None else ""
     L.append(f"  slam vs game: {result.ev_diff:+.0f} pts{imp}")
     if competitive:
         L.append(f"  → competitive deal: {result.opp_side} own it "
                  f"({og.label} {og.make_rate:.0f}%) — compete / sacrifice / defend (see PAR)")
+    elif result.bid_grand:
+        L.append(f"  → BID THE GRAND {gr.label} "
+                 f"(+{gr.avg_score - bs.avg_score:.0f} pts vs the small slam {bs.label})")
     else:
         L.append(f"  → {'bid the slam' if result.bid_slam else 'stay in game'}")
 

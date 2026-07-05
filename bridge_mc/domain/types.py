@@ -146,11 +146,13 @@ class SimResult:
     tries: int
     games: list = field(default_factory=list)     # list[ContractStat]
     slams: list = field(default_factory=list)
+    grands: list = field(default_factory=list)
     any_game: ContractStat | None = None
     any_slam: ContractStat | None = None
     grand: ContractStat | None = None
     best_game: ContractStat | None = None
     best_slam: ContractStat | None = None
+    best_grand: ContractStat | None = None
     ev_diff: float = 0.0
     imp: float | None = None
     samples: list = field(default_factory=list)    # list[SampleDeal]
@@ -195,6 +197,13 @@ class SimResult:
     @property
     def bid_slam(self) -> bool:
         return self.ev_diff > 0
+
+    @property
+    def bid_grand(self) -> bool:
+        """The grand is the highest-EV contract — worth more than the small slam."""
+        g, s, gm = self.best_grand, self.best_slam, self.best_game
+        return (g is not None and s is not None and gm is not None
+                and g.avg_score > s.avg_score and g.avg_score > gm.avg_score)
 
     def by_label(self, label: str) -> ContractStat | None:
         for s in (*self.games, *self.slams):

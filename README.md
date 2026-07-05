@@ -50,9 +50,11 @@ hands should accept a slam try and which should sign off.
   `0-2` (maximum), `x` (any) — e.g. `3-5 5+ 0-4 x`.
 - **Honour constraints** per seat: specific holdings (`DAK`, `HQxx`, `Sxx`),
   N-of-top-M (`H2/3` = 2 of the top 3 hearts), and controls (`ctrl3+`).
-- **Both sides, every run:** make-rates for you *and* the opponents at game and
-  slam level, plus grand-slam rate, average score, and the **expected IMP gain**
-  of bidding the slam.
+- **Both sides, every run:** make-rates for you *and* the opponents at game,
+  slam, and **grand-slam** level, with average score and the **expected IMP
+  gain** of bidding the slam. The verdict compares game vs small slam vs grand
+  by expected value — so it recommends the **grand** when 7 makes nearly as
+  often as 6, not just "bid the slam".
 - **Full board vulnerability** (None / N-S / E-W / Both): each side is scored at
   its own vulnerability.
 - **Adaptive report:** the run is classified as a slam / game / **competitive**

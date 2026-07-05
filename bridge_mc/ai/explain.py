@@ -61,9 +61,9 @@ def build_prompt(result, question: str = "") -> str:
         honstr = ("; honours " + ", ".join(hon)) if hon else ""
         return f"{s}: {sp.lo}-{sp.hi} HCP, {sh}{honstr}"
 
-    def contracts(games, slams):
+    def contracts(*groups):
         return ", ".join(f"{c.label} {c.make_rate:.0f}% ({c.avg_score:+.0f})"
-                         for c in (*games, *slams))
+                         for c in (c for g in groups for c in g))
 
     bg = result.best_game
     og = result.opp_best_game
@@ -75,11 +75,18 @@ def build_prompt(result, question: str = "") -> str:
          f"{'vulnerable' if result.vul_them else 'not vulnerable'}.",
          "Seats (our side first):"]
     L += ["  " + seat(s) for s in (us[0], us[1], them[0], them[1])]
-    L.append(f"{us} (us) can make:   {contracts(result.games, result.slams)}")
+    L.append(f"{us} (us) can make:   "
+             f"{contracts(result.games, result.slams, result.grands)}")
     if og:
         L.append(f"{them} (them) can make: {contracts(result.opp_games, result.opp_slams)}")
         L.append(f"Best makeable: {us} {bg.label} {bg.make_rate:.0f}%; "
                  f"{them} {og.label} {og.make_rate:.0f}%.")
+    if result.bid_grand:
+        gr, bs = result.best_grand, result.best_slam
+        L.append(f"NOTE: the grand slam {gr.label} makes {gr.make_rate:.0f}%, nearly as often "
+                 f"as the small slam {bs.label} ({bs.make_rate:.0f}%), so bidding {gr.label} is "
+                 f"worth {gr.avg_score - bs.avg_score:+.0f} points over stopping in six — "
+                 f"recommend the grand.")
     p = result.par
     if p:
         tops = "; ".join(c.replace(",", " or ") for c, _ in p.top)

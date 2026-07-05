@@ -24,15 +24,15 @@ from .theming import apply_palette
 from .workers import AiWorker, SimWorker
 
 DEFAULTS = {
-    "N": ("Constrain", "", 11, 18, "3-5 3-5 1-3 0"),
+    "N": ("Fixed", "AKQ Q987 64 AQJ5", 0, 37, "any"),
     "E": ("Random", "", 0, 37, "any"),
-    "S": ("Fixed", "876 AJT65 A7 K76", 11, 14, "5 3 0 0"),
-    "W": ("Constrain", "", 3, 10, "0 0 5-7 0"),
+    "S": ("Fixed", "876 AJT65 A7 K76", 0, 37, "any"),
+    "W": ("Constrain", "", 3, 7, "0 0 6 0"),
 }
 DEFAULT_SIDE = "NS"
 DEFAULT_VUL = "Both"
 DEFAULT_DEALS = 2000
-DEFAULT_ASK = "should South bid over 5H by North"
+DEFAULT_ASK = "should we bid the grand or stop in the small slam"
 MODES = ["Random", "Fixed", "Constrain"]
 
 

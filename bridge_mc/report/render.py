@@ -214,7 +214,14 @@ def _tiles(r, competitive, tone, game_pct, slam_pct, ev_diff):
     t += _tile(f'Best slam <span class="tag">{_lab(bs.label)}</span>',
                f'{slam_pct:.1f}<i>%</i>', 'makes double-dummy')
     t += _tile('Slam &minus; game', f'{ev_diff:+.0f}', 'points, expected', tone)
-    if r.imp is not None:
+    gr = r.best_grand
+    if gr and gr.make_rate >= 20:
+        gtone = "var(--good)" if r.bid_grand else None
+        sub = (f'+{gr.avg_score - bs.avg_score:.0f} pts vs the small slam'
+               if r.bid_grand else 'small slam is enough')
+        t += _tile(f'Grand <span class="tag">{_lab(gr.label)}</span>',
+                   f'{gr.make_rate:.0f}<i>%</i>', sub, gtone)
+    elif r.imp is not None:
         t += _tile('Slam swing', f'{r.imp:+.2f}', 'IMP / board', tone)
     else:
         t += _tile('Grand slam', f'{r.grand.make_rate:.0f}<i>%</i>',
@@ -274,6 +281,7 @@ def render_html(result, theme: str = "light") -> str:
     # Which pane fits this deal set (slam / game / competitive), from the engine.
     competitive = result.zone == "competitive" and og is not None
 
+    gr = result.best_grand
     if competitive:
         tone = "var(--warn)"
         hero_pct = og.make_rate
@@ -285,6 +293,13 @@ def render_html(result, theme: str = "light") -> str:
         say = (f'Your best is only {_lab(bg.label)} at {bg.make_rate:.0f}% — this is a '
                f'competitive decision (compete / sacrifice / defend), not a constructive one.'
                f'{parbit}')
+    elif result.bid_grand:
+        tone = "var(--good)"
+        hero_pct = gr.make_rate
+        h1 = f"Bid the grand &mdash; {_lab(gr.label)}"
+        say = (f'7-level {_lab(gr.label)} makes {gr.make_rate:.0f}% — nearly as often as the '
+               f'small slam {_lab(bs.label)} ({slam_pct:.0f}%) — so it beats it by '
+               f'<span class="em">{gr.avg_score - bs.avg_score:+.0f} pts</span>. Don\'t stop in six.')
     elif bid_slam:
         tone = "var(--good)"
         hero_pct = slam_pct
@@ -309,8 +324,8 @@ def render_html(result, theme: str = "light") -> str:
                   f'{f"<div class=meta>{meta}</div>" if meta else ""}</div>')
 
     game_rows = "".join(_row(s) for s in result.games) + _row(result.any_game)
-    slam_rows = "".join(_row(s) for s in result.slams) + \
-        _row(result.any_slam) + _row(result.grand)
+    slam_rows = "".join(_row(s) for s in result.slams) + _row(result.any_slam)
+    grand_rows = "".join(_row(s) for s in result.grands) + _row(result.grand)
 
     samples = ""
     if result.samples:
@@ -362,7 +377,7 @@ def render_html(result, theme: str = "light") -> str:
       <p class="gcap">Games</p>
       <table><thead><tr><th>Contract</th><th>Make-rate</th><th>&nbsp;</th><th style="text-align:right">Avg score</th></tr></thead>
         <tbody>{game_rows}</tbody></table>
-      {"" if competitive else f'<p class="gcap" style="margin-top:22px">Slams</p><table><tbody>{slam_rows}</tbody></table>'}
+      {"" if competitive else f'<p class="gcap" style="margin-top:22px">Slams</p><table><tbody>{slam_rows}</tbody></table><p class="gcap" style="margin-top:22px">Grands</p><table><tbody>{grand_rows}</tbody></table>'}
     </div>
   </section>
 

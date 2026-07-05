@@ -26,7 +26,9 @@ GAMES = [("3NT", "N", 9, "3N"), ("4H", "H", 10, "4H"), ("4S", "S", 10, "4S"),
          ("5C", "C", 11, "5C"), ("5D", "D", 11, "5D")]
 SLAMS = [("6C", "C", 12, "6C"), ("6D", "D", 12, "6D"), ("6H", "H", 12, "6H"),
          ("6S", "S", 12, "6S"), ("6NT", "N", 12, "6N")]
-ALL_CS = [g[3] for g in GAMES] + [s[3] for s in SLAMS]
+GRANDS = [("7C", "C", 13, "7C"), ("7D", "D", 13, "7D"), ("7H", "H", 13, "7H"),
+          ("7S", "S", 13, "7S"), ("7NT", "N", 13, "7N")]
+ALL_CS = [c[3] for c in GAMES + SLAMS + GRANDS]
 
 # IMP table: upper bound of point-difference for each IMP value 0..24
 _IMP_UP = [10, 40, 80, 120, 160, 210, 260, 310, 360, 420, 490, 590, 740, 890,

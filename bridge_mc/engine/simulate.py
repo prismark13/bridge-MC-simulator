@@ -13,8 +13,8 @@ from collections import Counter
 from redeal import Contract
 
 from ..domain.contracts import (
-    ALL_CS, ATTR, GAMES, ORDER, SIDE_IDX, SLAMS, SUIT_SYM, opp_side, side_vul,
-    to_imps)
+    ALL_CS, ATTR, GAMES, GRANDS, ORDER, SIDE_IDX, SLAMS, SUIT_SYM, opp_side,
+    side_vul, to_imps)
 from ..domain.types import (
     Breakdown, ContractStat, Par, Sacrifice, SampleDeal, SimResult)
 from .sampling import build_dealer, fmt_hand
@@ -56,9 +56,9 @@ class _Acc:
         self.a, self.b = idx
         self.lut = lut
         self.store = store
-        self.make = {lab: 0 for lab, *_ in GAMES + SLAMS}
+        self.make = {lab: 0 for lab, *_ in GAMES + SLAMS + GRANDS}
         self.make.update({"any game": 0, "any slam": 0, "grand": 0})
-        self.score = {lab: 0 for lab, *_ in GAMES + SLAMS}
+        self.score = {lab: 0 for lab, *_ in GAMES + SLAMS + GRANDS}
         self.gvecs, self.svecs = [], []
 
     def add(self, tv):
@@ -77,6 +77,10 @@ class _Acc:
             self.score[lab] += sc; svec.append(sc)
             if st[strain] >= need:
                 self.make[lab] += 1; sl = True
+        for lab, strain, need, cs in GRANDS:
+            self.score[lab] += self.lut[cs][st[strain]]
+            if st[strain] >= need:
+                self.make[lab] += 1
         self.make["any game"] += g
         self.make["any slam"] += sl
         self.make["grand"] += max(st.values()) >= 13
@@ -93,18 +97,20 @@ def _stats(acc, accepted):
 
     games = [stat(g[0], True) for g in GAMES]
     slams = [stat(s[0], True) for s in SLAMS]
+    grands = [stat(g[0], True) for g in GRANDS]
     best_game = max(games, key=lambda c: c.avg_score)
     best_slam = max(slams, key=lambda c: c.avg_score)
+    best_grand = max(grands, key=lambda c: c.avg_score)
     imp = None
     if acc.store and acc.gvecs:
         bg, bs = games.index(best_game), slams.index(best_slam)
         imp = sum(to_imps(acc.svecs[k][bs] - acc.gvecs[k][bg])
                   for k in range(len(acc.gvecs))) / len(acc.gvecs)
-    return {"games": games, "slams": slams,
+    return {"games": games, "slams": slams, "grands": grands,
             "any_game": stat("any game", False), "any_slam": stat("any slam", False),
             "grand": stat("grand", False), "best_game": best_game,
-            "best_slam": best_slam, "ev_diff": best_slam.avg_score - best_game.avg_score,
-            "imp": imp}
+            "best_slam": best_slam, "best_grand": best_grand,
+            "ev_diff": best_slam.avg_score - best_game.avg_score, "imp": imp}
 
 
 def _breakdown(seat, contract_label, hcps, shapes, sts):
@@ -252,10 +258,10 @@ def run(config, solver=None, progress=lambda a, t: None, stop=lambda: False):
 
     return SimResult(
         config=config, accepted=accepted, tries=tries,
-        games=U["games"], slams=U["slams"],
+        games=U["games"], slams=U["slams"], grands=U["grands"],
         any_game=U["any_game"], any_slam=U["any_slam"], grand=U["grand"],
         best_game=U["best_game"], best_slam=U["best_slam"],
-        ev_diff=U["ev_diff"], imp=U["imp"],
+        best_grand=U["best_grand"], ev_diff=U["ev_diff"], imp=U["imp"],
         samples=samples, breakdown=breakdown,
         opp_games=T["games"], opp_slams=T["slams"],
         opp_best_game=T["best_game"], opp_best_slam=T["best_slam"],
