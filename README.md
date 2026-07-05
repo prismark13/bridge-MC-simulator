@@ -44,12 +44,22 @@ hands should accept a slam try and which should sign off.
 **Features**
 
 - **Per-seat input:** every seat (N/E/S/W) can be Random, a Fixed hand, or
-  Constrained (HCP + shape / min-lengths).
-- Every strain (♣/♦/♥/♠/NT) at game and slam level, plus grand-slam rate, with
-  average score and the **expected IMP gain per board** of bidding the slam.
-- **Decision-contract breakdown** (default): make-rate sliced by the constrained
-  hand's HCP, trump-support length, and short-suit (ruffing) value — targets the
-  slam when a slam is live, otherwise the game.
+  Constrained (HCP + shape). A **card picker** builds fixed hands click-by-click
+  and blocks any card already used in another hand. Shapes take per-suit ranges:
+  `5`/`5+` (minimum), `3-5` (range), `0-2` (maximum), `x` (any) — e.g.
+  `3-5 5+ 0-4 x`.
+- **Both sides, every run:** make-rates for you *and* the opponents at game and
+  slam level, plus grand-slam rate, average score, and the **expected IMP gain**
+  of bidding the slam.
+- **Full board vulnerability** (None / N-S / E-W / Both): each side is scored at
+  its own vulnerability.
+- **Adaptive report:** the run is classified as a slam / game / **competitive**
+  deal and shows the pane that fits — slam-vs-game and a *which-hands-bid-on*
+  breakdown on constructive deals; on a competitive deal it drops the slam
+  content and shows the sides side-by-side instead.
+- **Competitive tools:** DDS **par** (optimal result with doubled sacrifices),
+  and a **Sacrifice EV** panel — the average equity of bidding your save vs
+  passing, with the opponents doubling or bidding on optimally.
 - **Styled report inside the app:** rendered by QtWebEngine (Chromium), with a
   **Log** tab for the raw text. **Save…** to `.html`/`.txt`, or **Open in
   browser** for a full-window view. Light/dark toggle.

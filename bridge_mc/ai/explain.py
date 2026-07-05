@@ -4,8 +4,6 @@
 place that touches the anthropic SDK, yielding text chunks so any front-end can
 adapt the stream to its own event model.
 """
-from ..domain.contracts import ORDER
-
 try:
     import anthropic
     HAVE_ANTHROPIC = True
@@ -18,9 +16,13 @@ SYSTEM = (
     "double-dummy Monte-Carlo simulation for one deal setup. If the user asks a "
     "specific question, answer that directly; otherwise give a concise, "
     "practical verdict: whether to bid on or stop, the safety-net contract, and "
-    "the one or two factors that most drive the outcome. When the results "
-    "include a make-rate breakdown by the constrained hand's HCP / trump length "
-    "/ shortness, use it to say WHICH hands should bid on. Keep it practical, "
+    "the one or two factors that most drive the outcome. Both sides' makeable "
+    "contracts are given with the board vulnerability, so when relevant judge "
+    "the competitive decision (compete, double, or sacrifice) — a sacrifice is "
+    "good when its expected cost is less than the opponents' making contract. "
+    "When the results include a make-rate breakdown by the constrained hand's "
+    "HCP / trump length / shortness, use it to say WHICH hands should bid on. "
+    "Keep it practical, "
     "roughly 120-200 words, and use ONLY the numbers provided; do not invent new "
     "ones. Plain text, no preamble."
 )
@@ -30,31 +32,58 @@ def build_prompt(result, question: str = "") -> str:
     """Serialize the result for Claude. ``question`` steers the analysis;
     blank falls back to the standard bid/stop verdict."""
     specs = result.config.specs if result.config else {}
+    us, them = result.side, result.opp_side
 
     def seat(s):
         sp = specs.get(s)
         if sp is None or sp.kind == "random":
-            return f"{s}: random"
+            return f"{s}: unknown (dealt at random)"
         if sp.kind == "fixed":
             return f"{s}: {sp.fixed}"
-        sh = sp.shape if sp.shape != "minlen" else "min " + "/".join(map(str, sp.mins))
+        if sp.shape == "minlen":
+            def rng(mn, mx):
+                if mn == mx:
+                    return str(mn)
+                if mx >= 13:
+                    return f"{mn}+"
+                return f"0-{mx}" if mn == 0 else f"{mn}-{mx}"
+            sh = "lengths S/H/D/C " + "/".join(
+                rng(sp.mins[i], sp.maxs[i]) for i in range(4))
+        else:
+            sh = sp.shape
         return f"{s}: {sp.lo}-{sp.hi} HCP, {sh}"
 
-    n = result.accepted
-    L = [f"Double-dummy Monte-Carlo, {n} deals. Analysing {result.side}, "
-         f"{'vulnerable' if result.vul else 'non-vul'}.", "Hands:"]
-    L += ["  " + seat(s) for s in ORDER]
-    L.append("Contract  make%  avgScore:")
-    for stat in (*result.games, *result.slams):
-        L.append(f"  {stat.label:<4} {stat.make_rate:4.0f}%  {stat.avg_score:+5.0f}")
-    L.append(f"  any game {result.any_game.make_rate:.0f}%, "
-             f"any slam {result.any_slam.make_rate:.0f}%, "
-             f"grand {result.grand.make_rate:.0f}%")
-    bg, bs = result.best_game, result.best_slam
-    imp = f", {result.imp:+.2f} IMP/board" if result.imp is not None else ""
-    L.append(f"Best game {bg.label} EV {bg.avg_score:+.0f}; "
-             f"best slam {bs.label} EV {bs.avg_score:+.0f}; "
-             f"slam vs game {result.ev_diff:+.0f} pts{imp}.")
+    def contracts(games, slams):
+        return ", ".join(f"{c.label} {c.make_rate:.0f}% ({c.avg_score:+.0f})"
+                         for c in (*games, *slams))
+
+    bg = result.best_game
+    og = result.opp_best_game
+
+    L = [f"Double-dummy Monte-Carlo, {result.accepted} deals. We are {us}; "
+         f"the opponents are {them}.",
+         f"Vulnerability {result.vul}: {us} "
+         f"{'vulnerable' if result.vul_us else 'not vulnerable'}, {them} "
+         f"{'vulnerable' if result.vul_them else 'not vulnerable'}.",
+         "Seats (our side first):"]
+    L += ["  " + seat(s) for s in (us[0], us[1], them[0], them[1])]
+    L.append(f"{us} (us) can make:   {contracts(result.games, result.slams)}")
+    if og:
+        L.append(f"{them} (them) can make: {contracts(result.opp_games, result.opp_slams)}")
+        L.append(f"Best makeable: {us} {bg.label} {bg.make_rate:.0f}%; "
+                 f"{them} {og.label} {og.make_rate:.0f}%.")
+    p = result.par
+    if p:
+        tops = "; ".join(c.replace(",", " or ") for c, _ in p.top)
+        L.append(f"Par ({us} view): average {p.avg_us:+.0f}; a doubled sacrifice is the "
+                 f"par action on {p.sac_rate*100:.0f}% of boards; typical par: {tops}.")
+    s = result.sacrifice
+    if s and s.save_bid and result.zone == "competitive":
+        L.append(f"Sacrifice decision ({us}: bid {s.save_bid} vs pass over "
+                 f"{s.opp_game}): if {us} ALWAYS pass, average equity {s.avg_pass:+.0f}; "
+                 f"if {us} ALWAYS bid {s.save_bid}, average {s.avg_bid:+.0f} (opponents "
+                 f"double or bid on optimally), which beats passing on {s.bid_better*100:.0f}% "
+                 f"of deals. So on average {'bidding the save' if s.recommend_bid else 'passing'} is better.")
 
     bd = result.breakdown
     if bd and bd.by_hcp:
@@ -67,8 +96,12 @@ def build_prompt(result, question: str = "") -> str:
         if bd.by_short:
             L.append(f"  by shortest side-suit: {slices(bd.by_short)}")
 
+    L.append(f"Reading the numbers: make% is how often the DECLARING side takes enough "
+             f"tricks; the score in parentheses is that side's average points, so a "
+             f"positive {them} score is a loss for {us}. Par is from {us}'s view "
+             f"('x' = doubled).")
     q = (question or "").strip()
-    L.append(f"User question: {q}" if q else "Give the verdict.")
+    L.append(f"Question: {q}" if q else "Give the bid-or-stop verdict for us.")
     return "\n".join(L)
 
 

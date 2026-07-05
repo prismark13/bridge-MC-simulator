@@ -25,10 +25,11 @@ def _shape_for(sp) -> Shape:
         return balanced
     if sp.shape == "semibal":
         return semibalanced
-    if sp.shape == "minlen" and any(sp.mins):
-        mn = sp.mins
+    if sp.shape == "minlen" and (any(sp.mins) or any(x < 13 for x in sp.maxs)):
+        mn, mx = sp.mins, sp.maxs
         return Shape.from_cond(
-            lambda s, h, d, c: s >= mn[0] and h >= mn[1] and d >= mn[2] and c >= mn[3])
+            lambda s, h, d, c: mn[0] <= s <= mx[0] and mn[1] <= h <= mx[1]
+            and mn[2] <= d <= mx[2] and mn[3] <= c <= mx[3])
     # 'any' shape (HCP-only constraint): full wildcard, SmartStack biases HCP.
     return Shape.from_cond(lambda s, h, d, c: True)
 
@@ -63,7 +64,7 @@ def build_dealer(config):
                 return False
             if sp.shape == "minlen":
                 sh = hand.shape
-                if any(sh[i] < sp.mins[i] for i in range(4)):
+                if any(sh[i] < sp.mins[i] or sh[i] > sp.maxs[i] for i in range(4)):
                     return False
         return True
 

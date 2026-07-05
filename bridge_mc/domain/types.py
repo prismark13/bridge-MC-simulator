@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from .contracts import opp_side, side_vul
+
 
 @dataclass(frozen=True)
 class SeatSpec:
@@ -22,6 +24,7 @@ class SeatSpec:
     hi: int = 37
     shape: str = "any"                    # "any" | "bal" | "semibal" | "minlen"
     mins: tuple = (0, 0, 0, 0)            # S/H/D/C minimum lengths when shape == "minlen"
+    maxs: tuple = (13, 13, 13, 13)        # S/H/D/C maximum lengths when shape == "minlen"
 
     @staticmethod
     def random() -> "SeatSpec":
@@ -32,14 +35,16 @@ class SeatSpec:
         return SeatSpec("fixed", fixed=hand)
 
     @staticmethod
-    def constrained(lo: int, hi: int, shape: str, mins) -> "SeatSpec":
-        return SeatSpec("con", lo=lo, hi=hi, shape=shape, mins=tuple(mins))
+    def constrained(lo: int, hi: int, shape: str, mins, maxs=None) -> "SeatSpec":
+        return SeatSpec("con", lo=lo, hi=hi, shape=shape, mins=tuple(mins),
+                        maxs=tuple(maxs) if maxs is not None else (13, 13, 13, 13))
 
     @property
     def constrains(self) -> bool:
         """True if this seat imposes a filter beyond 'any 0-37'."""
         return self.kind == "con" and (
-            self.lo > 0 or self.hi < 37 or self.shape != "any" or any(self.mins))
+            self.lo > 0 or self.hi < 37 or self.shape != "any"
+            or any(self.mins) or any(m < 13 for m in self.maxs))
 
 
 @dataclass(frozen=True)
@@ -48,8 +53,8 @@ class SimConfig:
     n: int                 # target accepted deals
     max_tries: int
     seed: str = ""
-    side: str = "NS"       # side being analysed
-    vul: bool = False
+    side: str = "NS"       # protagonist side ("us"); the other side is "them"
+    vul: str = "None"      # board vulnerability: None / NS / EW / Both
     n_samples: int = 6
 
 
@@ -57,6 +62,8 @@ class SimConfig:
 class SampleDeal:
     hands: dict            # seat -> "♠AK5 ♥QJT ♦9432 ♣K8"
     tricks: dict           # strain -> DD tricks for the analysed side
+    par: str = ""          # par contract(s) on this deal, e.g. "EW 5Dx"
+    par_score: int = 0     # par score from our side's perspective
 
 
 @dataclass(frozen=True)
@@ -74,6 +81,34 @@ class ContractStat:
     def ci95(self) -> float:
         p = self.make_rate
         return 1.96 * (p * (100 - p) / self.trials) ** 0.5 if self.trials else 0.0
+
+
+@dataclass(frozen=True)
+class Par:
+    """Optimal competitive result (DDS par) aggregated over the run.
+
+    ``avg_us`` is the average par score from the protagonist side's view — the
+    expected outcome of double-dummy-optimal competitive bidding, already
+    accounting for doubled sacrifices and both vulnerabilities. ``sac_rate`` is
+    the fraction of boards whose par contract is a doubled sacrifice.
+    """
+    avg_us: float
+    sac_rate: float
+    top: list = field(default_factory=list)     # list[(contract_str, count)]
+
+
+@dataclass(frozen=True)
+class Sacrifice:
+    """'Bid the save vs pass' equity for our side on a competitive deal."""
+    opp_game: str          # the opponents' game we're defending against, e.g. "4S"
+    save_bid: str          # our typical save, e.g. "5D"
+    avg_pass: float        # avg equity if we always pass
+    avg_bid: float         # avg equity if we always bid the save (they respond best)
+    bid_better: float      # fraction of deals where bidding beats passing
+
+    @property
+    def recommend_bid(self) -> bool:
+        return self.avg_bid > self.avg_pass
 
 
 @dataclass(frozen=True)
@@ -109,6 +144,14 @@ class SimResult:
     imp: float | None = None
     samples: list = field(default_factory=list)    # list[SampleDeal]
     breakdown: "Breakdown | None" = None
+    # The opposing side ("them") — for competitive-auction judgement.
+    opp_games: list = field(default_factory=list)  # list[ContractStat]
+    opp_slams: list = field(default_factory=list)
+    opp_best_game: ContractStat | None = None
+    opp_best_slam: ContractStat | None = None
+    par: "Par | None" = None
+    zone: str = "game"     # "slam" | "game" | "competitive" — which analysis fits
+    sacrifice: "Sacrifice | None" = None
 
     @property
     def empty(self) -> bool:
@@ -119,8 +162,20 @@ class SimResult:
         return self.config.side
 
     @property
-    def vul(self) -> bool:
+    def opp_side(self) -> str:
+        return opp_side(self.config.side)
+
+    @property
+    def vul(self) -> str:
         return self.config.vul
+
+    @property
+    def vul_us(self) -> bool:
+        return side_vul(self.config.vul, self.config.side)
+
+    @property
+    def vul_them(self) -> bool:
+        return side_vul(self.config.vul, opp_side(self.config.side))
 
     @property
     def accept_rate(self) -> float:

@@ -50,8 +50,10 @@ def main(argv=None):
                    help="constrain a seat, e.g. --con N '16-21:0,5,4,0'")
     p.add_argument("-n", "--deals", type=int, default=5000)
     p.add_argument("--seed", default="")
-    p.add_argument("--side", choices=["NS", "EW"], default="NS")
-    p.add_argument("--vul", action="store_true")
+    p.add_argument("--side", choices=["NS", "EW"], default="NS",
+                   help="which side is 'us' (both sides are analysed)")
+    p.add_argument("--vul", choices=["None", "NS", "EW", "Both"], default="None",
+                   help="board vulnerability")
     p.add_argument("--samples", type=int, default=4)
     p.add_argument("--html", metavar="PATH", help="write an HTML report instead of text")
     args = p.parse_args(argv)

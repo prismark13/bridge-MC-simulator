@@ -8,6 +8,19 @@ ORDER = ["N", "E", "S", "W"]
 ATTR = {"N": "north", "E": "east", "S": "south", "W": "west"}
 SIDE_IDX = {"NS": (0, 2), "EW": (1, 3)}
 
+# Board vulnerability: which side(s) are vulnerable.
+VUL_STATES = ["None", "NS", "EW", "Both"]
+VUL_LABEL = {"None": "None", "NS": "N-S", "EW": "E-W", "Both": "Both"}
+
+
+def side_vul(vul, side):
+    """Is ``side`` ('NS'/'EW') vulnerable under board vulnerability ``vul``?"""
+    return vul in (side, "Both")
+
+
+def opp_side(side):
+    return "EW" if side == "NS" else "NS"
+
 #            label  strain  need  contract-string
 GAMES = [("3NT", "N", 9, "3N"), ("4H", "H", 10, "4H"), ("4S", "S", 10, "4S"),
          ("5C", "C", 11, "5C"), ("5D", "D", 11, "5D")]

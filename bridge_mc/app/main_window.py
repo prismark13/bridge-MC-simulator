@@ -15,18 +15,24 @@ from PySide6.QtWidgets import (
     QPushButton, QSpinBox, QTabWidget, QVBoxLayout, QWidget)
 
 from ..ai import HAVE_ANTHROPIC, build_prompt
-from ..domain import ORDER, SimConfig, build_specs
+from ..domain import (
+    ORDER, SUITS, VUL_LABEL, VUL_STATES, SimConfig, build_specs, parse_suit)
 from ..engine.sampling import smart_seat
 from ..report import render_html, render_text
+from .card_picker import CardPicker
 from .theming import apply_palette
 from .workers import AiWorker, SimWorker
 
 DEFAULTS = {
-    "N": ("Constrain", "", 22, 24, "bal"),
-    "E": ("Random", "", 0, 37, "any"),
-    "S": ("Fixed", "9 J6 K9753 QJ654", 0, 37, "any"),
-    "W": ("Random", "", 0, 37, "any"),
+    "N": ("Constrain", "", 7, 10, "3 5 0 0"),
+    "E": ("Fixed", "T74 2 QT5 KQ8632", 0, 37, "any"),
+    "S": ("Constrain", "", 11, 14, "5 3 0 0"),
+    "W": ("Constrain", "", 11, 16, "0 0 5 0"),
 }
+DEFAULT_SIDE = "EW"
+DEFAULT_VUL = "Both"
+DEFAULT_DEALS = 2000
+DEFAULT_ASK = "Should East bid on over 4S or pass"
 MODES = ["Random", "Fixed", "Constrain"]
 
 
@@ -64,10 +70,10 @@ class MainWindow(QMainWindow):
         g = QGridLayout(hands)
         g.setContentsMargins(10, 8, 10, 10)
         g.setHorizontalSpacing(6); g.setVerticalSpacing(4)
-        hint = QLabel("Fixed: '♠ ♥ ♦ ♣'  e.g.  AK5 QJT 9432 K8      "
-                      "Shape: bal / semibal / any / '0 5 4 0'")
+        hint = QLabel("Fixed: click 'Cards…' or type '♠ ♥ ♦ ♣' e.g. AK5 QJT 9432 K8      "
+                      "Shape: bal / semibal / any / lengths '0 5 4 0' or '3-5 5+ 0-4 x'")
         hint.setStyleSheet("color:#888;")
-        g.addWidget(hint, 0, 0, 1, 7)
+        g.addWidget(hint, 0, 0, 1, 8)
         for c, h in enumerate(["", "Mode", "Fixed hand", "HCP", "", "", "Shape"]):
             lbl = QLabel(h); lbl.setStyleSheet("font-weight:600;")
             g.addWidget(lbl, 1, c)
@@ -87,18 +93,28 @@ class MainWindow(QMainWindow):
             g.addWidget(shi, i, 5); self.hhi[seat] = shi
             es = QLineEdit(shp); es.setMaximumWidth(110)
             g.addWidget(es, i, 6); self.shp[seat] = es
+            pick = QPushButton("Cards…"); pick.setMaximumWidth(64)
+            pick.setToolTip("Pick a fixed hand — cards used elsewhere are blocked")
+            pick.clicked.connect(lambda _=False, s=seat: self._pick_cards(s))
+            g.addWidget(pick, i, 7)
         g.setColumnStretch(2, 1)
         root.addWidget(hands)
 
         opt = QGroupBox("Options")
         o = QHBoxLayout(opt); o.setContentsMargins(10, 8, 10, 8)
-        o.addWidget(QLabel("Analyse"))
-        self.side = QComboBox(); self.side.addItems(["NS", "EW"]); o.addWidget(self.side)
+        o.addWidget(QLabel("Us"))
+        self.side = QComboBox(); self.side.addItems(["NS", "EW"])
+        self.side.setCurrentText(DEFAULT_SIDE)
+        self.side.setToolTip("Which side is 'us'; both sides are analysed either way")
+        o.addWidget(self.side)
         o.addSpacing(10); o.addWidget(QLabel("Vul"))
-        self.vul = QComboBox(); self.vul.addItems(["Non-vul", "Vul"]); o.addWidget(self.vul)
+        self.vul = QComboBox(); self.vul.addItems([VUL_LABEL[v] for v in VUL_STATES])
+        self.vul.setCurrentText(VUL_LABEL[DEFAULT_VUL])
+        self.vul.setToolTip("Board vulnerability — each side scored at its own")
+        o.addWidget(self.vul)
         o.addSpacing(10); o.addWidget(QLabel("Deals"))
         self.ndeals = QSpinBox(); self.ndeals.setRange(100, 1_000_000)
-        self.ndeals.setSingleStep(1000); self.ndeals.setValue(5000)
+        self.ndeals.setSingleStep(1000); self.ndeals.setValue(DEFAULT_DEALS)
         self.ndeals.setGroupSeparatorShown(True); o.addWidget(self.ndeals)
         o.addSpacing(10); o.addWidget(QLabel("Seed"))
         self.seed = QLineEdit(); self.seed.setMaximumWidth(70); o.addWidget(self.seed)
@@ -133,6 +149,7 @@ class MainWindow(QMainWindow):
         ask_lbl = QLabel("Ask Claude"); ask_lbl.setStyleSheet("color:#888;")
         ask_row.addWidget(ask_lbl)
         self.ask = QLineEdit()
+        self.ask.setText(DEFAULT_ASK)
         self.ask.setPlaceholderText(
             "what to analyse — blank = standard bid/stop verdict")
         self.ask.returnPressed.connect(self._explain)
@@ -176,6 +193,34 @@ class MainWindow(QMainWindow):
         for w in (self.hlo[seat], self.hhi[seat], self.shp[seat]):
             w.setEnabled(con)
 
+    def _vul_state(self):
+        label = self.vul.currentText()
+        return next((v for v in VUL_STATES if VUL_LABEL[v] == label), "None")
+
+    def _cards_of(self, text):
+        """Lenient parse of a (possibly partial) hand -> set of (suit, rank)."""
+        cards = set()
+        toks = (text.split() + ["", "", "", ""])[:4]
+        for suit, tok in zip(SUITS, toks):
+            try:
+                for r in parse_suit(tok):
+                    cards.add((suit, r))
+            except ValueError:
+                pass
+        return cards
+
+    def _pick_cards(self, seat):
+        used = {}
+        for s in ORDER:
+            if s != seat and self.mode[s].currentText() == "Fixed":
+                for c in self._cards_of(self.hand[s].text()):
+                    used[c] = s
+        dlg = CardPicker(self, seat, self._cards_of(self.hand[seat].text()), used)
+        if dlg.exec():
+            self.hand[seat].setText(dlg.hand_string())
+            self.mode[seat].setCurrentText("Fixed")
+            self._sync(seat)
+
     # ---------------------------------------------------------------- run
     def run(self):
         raw = {seat: {"mode": self.mode[seat].currentText(),
@@ -195,7 +240,7 @@ class MainWindow(QMainWindow):
         max_tries = max(n * 500, 2_000_000) if rej_present else n
         config = SimConfig(
             specs=specs, n=n, max_tries=max_tries, seed=self.seed.text().strip(),
-            side=self.side.currentText(), vul=self.vul.currentText() == "Vul",
+            side=self.side.currentText(), vul=self._vul_state(),
             n_samples=6 if self.samples_cb.isChecked() else 0)
 
         self._set_log("preparing…")

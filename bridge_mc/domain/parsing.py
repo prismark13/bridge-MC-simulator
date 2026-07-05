@@ -38,22 +38,50 @@ def parse_fixed(text):
     return " ".join(holds[s] or "-" for s in SUITS), cards
 
 
+def _len_token(tok):
+    """One suit-length spec -> (min, max). 'x'/'' any, 'n' min-n, 'n+' min-n, 'a-b' range."""
+    t = tok.strip().lower()
+    if t in ("", "x"):
+        return 0, 13
+    if t.endswith("+"):
+        return int(t[:-1]), 13
+    if "-" in t:
+        a, b = t.split("-", 1)
+        return int(a), int(b)
+    return int(t), 13                    # plain digit = minimum (backward compatible)
+
+
 def parse_shape(text):
-    """-> (kind, mins) where kind in {'any','bal','semibal','minlen'}."""
+    """-> (kind, mins, maxs) where kind in {'any','bal','semibal','minlen'}.
+
+    Length specs accept a min ('5', '5+'), a range ('3-5'), or any ('x'):
+    e.g. '0 5 4 0' (5+H 4+D) or '3-5 5+ 0-4 x'.
+    """
     t = text.strip().lower()
     if t in ("", "any"):
-        return "any", [0, 0, 0, 0]
+        return "any", [0, 0, 0, 0], [13, 13, 13, 13]
     if t in ("bal", "balanced"):
-        return "bal", [0, 0, 0, 0]
+        return "bal", [0, 0, 0, 0], [13, 13, 13, 13]
     if t in ("semi", "semibal", "semibalanced"):
-        return "semibal", [0, 0, 0, 0]
+        return "semibal", [0, 0, 0, 0], [13, 13, 13, 13]
     parts = t.split()
-    if len(parts) == 4 and all(p.isdigit() for p in parts):
-        mins = [int(p) for p in parts]
+    if len(parts) == 4:
+        mins, maxs = [], []
+        for p in parts:
+            try:
+                a, b = _len_token(p)
+            except ValueError:
+                raise ValueError(f"bad suit length {p!r}")
+            if not (0 <= a <= b <= 13):
+                raise ValueError(f"suit length {p!r} out of range 0-13")
+            mins.append(a); maxs.append(b)
         if sum(mins) > 13:
             raise ValueError(f"min lengths sum to {sum(mins)} (>13)")
-        return "minlen", mins
-    raise ValueError("use 'bal', 'semibal', 'any', or 4 min-lengths like '0 5 4 0'")
+        if sum(maxs) < 13:
+            raise ValueError(f"max lengths sum to {sum(maxs)} (<13)")
+        return "minlen", mins, maxs
+    raise ValueError("use 'bal', 'semibal', 'any', or 4 suit lengths "
+                     "like '0 5 4 0' or '3-5 5+ 0-4 x'")
 
 
 def build_specs(raw):
@@ -79,8 +107,11 @@ def build_specs(raw):
             lo, hi = int(r["lo"]), int(r["hi"])
             if lo > hi:
                 raise ValueError(f"{seat}: HCP min > max")
-            kind, mins = parse_shape(r["shape"])
-            specs[seat] = SeatSpec.constrained(lo, hi, kind, mins)
+            try:
+                kind, mins, maxs = parse_shape(r["shape"])
+            except ValueError as e:
+                raise ValueError(f"{seat} shape: {e}")
+            specs[seat] = SeatSpec.constrained(lo, hi, kind, mins, maxs)
         else:
             specs[seat] = SeatSpec.random()
     return specs
