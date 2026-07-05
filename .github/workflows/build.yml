@@ -22,27 +22,32 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Linux DDS / Tk libraries
+      - name: Linux DDS runtime library
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libgomp1 python3-tk
+        run: sudo apt-get update && sudo apt-get install -y libgomp1
 
       - name: Install build deps
         run: |
-          python -m pip install --upgrade pip pyinstaller sv-ttk anthropic
+          python -m pip install --upgrade pip pyinstaller anthropic PySide6
           python -m pip install "git+https://github.com/anntzer/redeal"
 
       - name: Build standalone app
-        run: pyinstaller --noconfirm --onefile --windowed --name BridgeMCSimulator --collect-all redeal --collect-all sv_ttk --collect-all anthropic bridge_sim_gui.py
+        # One-folder (not --onefile): QtWebEngine ships a Chromium helper +
+        # resources that are unreliable when unpacked from a temp dir each launch.
+        run: >
+          pyinstaller --noconfirm --onedir --windowed --name BridgeMCSimulator
+          --collect-all redeal --collect-all anthropic --collect-all PySide6
+          --collect-data bridge_mc bridge_sim_gui.py
 
-      - name: Name binary per-OS (avoid release asset collisions)
+      - name: Package the one-folder app
         shell: bash
         run: |
           mkdir -p out
-          case "${{ runner.os }}" in
-            Windows) cp dist/BridgeMCSimulator.exe out/BridgeMCSimulator.exe ;;
-            Linux)   cp dist/BridgeMCSimulator     out/BridgeMCSimulator-linux ;;
-            macOS)   cp dist/BridgeMCSimulator     out/BridgeMCSimulator-macos ;;
-          esac
+          python - <<'PY'
+          import platform, shutil
+          osname = {"Windows": "windows", "Darwin": "macos", "Linux": "linux"}[platform.system()]
+          shutil.make_archive(f"out/BridgeMCSimulator-{osname}", "zip", "dist")
+          PY
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
@@ -54,4 +59,6 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
+          name: Bridge MC Simulator ${{ github.ref_name }}
+          generate_release_notes: true
           files: out/*

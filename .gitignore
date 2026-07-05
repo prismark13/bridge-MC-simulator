@@ -22,3 +22,6 @@ Thumbs.db
 
 # Secret: your Anthropic API key (used by run_with_ai.bat) — never commit
 apikey.txt
+
+# PyInstaller generated spec
+*.spec

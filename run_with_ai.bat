@@ -21,5 +21,5 @@ if errorlevel 1 (
   echo   API key loaded -- AI "Explain" is enabled.
 )
 
-start "" "%~dp0dist\BridgeMCSimulator.exe"
+start "" "%~dp0dist\BridgeMCSimulator\BridgeMCSimulator.exe"
 endlocal

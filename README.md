@@ -2,154 +2,159 @@
 
 A small Monte-Carlo tool for **bridge bidding analysis**. You fix your own hand,
 constrain partner by HCP and shape, and it generates thousands of deals and
-solves each one **double-dummy** to report how often games and slams make.
+solves each one **double-dummy** to report how often games and slams make — and
+**which partner hands should bid on**.
 
-It ships with a Tk GUI and a couple of headless example scripts.
+It ships with a PySide6 (Qt) desktop GUI, a headless CLI, and a couple of
+example scripts.
 
 ![screenshot placeholder](docs/screenshot.png)
 
 ## What it answers
 
-For a fixed hand opposite a constrained partner, e.g. *"partner is 22–24
-balanced"*, it reports make-rates for **every game and slam** with 95%
-confidence intervals, plus a few sample layouts:
+For a fixed hand opposite a constrained partner, e.g. *"partner is 5+♥ 4+♦,
+16–21"*, it reports make-rates for **every game and slam** with 95% confidence
+intervals, a bidding-decision readout, and a breakdown of **when the decision
+contract makes** by partner's strength and shape:
 
 ```
-5000 deals  (5000 tries, 100.0% accepted)
-double-dummy, best NS declarer
+1500 deals   (1500 tries, 100.0% accepted)
+double-dummy · analysing NS · non-vul
 
 GAMES
---------------------------------
-  3NT         95.4% +-0.6  ###################
-  4H          76.x% +-...  ###############
-  4S          ...
-  5C          ...
-  5D          90.8% +-0.8  ##################
-  any game    99.x% +-...
-
+  3NT      98.3% ±0.6    +440  ▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉
+  5D       91.4% ±1.4    +374  ▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉▉
 SLAMS
---------------------------------
-  6C          58.0% +-1.4  ############
-  6D          49.4% +-1.4  ##########
-  6H          ...
-  6NT         ...
-  any slam    69.9% +-1.3  ##############
-  grand(7)    15.0% +-1.0  ###
+  6D       54.1% ±2.5    +472  ▉▉▉▉▉▉▉▉▉▉▉
 
-SAMPLE PARTNER HANDS
---------------------------------
-  ♠AK8 ♥AQ7 ♦AJ6 ♣A872  HCP 22  shape (3,3,3,4)  tricks C11 D11 H10 S10 NT11
-  ...
+BIDDING DECISION
+  best game : 3NT  EV +440
+  best slam : 6D   EV +472
+  slam vs game: +33 pts,  +0.75 IMP/board   → bid the slam
+
+WHEN 6D MAKES  (by N's hand)
+  by HCP    16 HCP 38%   17 HCP 51%   18 HCP 74%   20 HCP 91%   21 HCP 98%
+  by trumps 4♦ 51%   5♦ 70%   6+♦ 78%
+  by shape  singleton/void 57%   doubleton 45%
 ```
 
-so you can decide whether a slam try is worth it and which strain is the spot.
+So you can decide not just *whether* the slam is worth it, but which partner
+hands should accept a slam try and which should sign off.
 
 **Features**
 
 - **Per-seat input:** every seat (N/E/S/W) can be Random, a Fixed hand, or
   Constrained (HCP + shape / min-lengths).
-- Every strain (♣/♦/♥/♠/NT) at game and slam level, plus grand-slam rate.
-- **Choose the side** to analyse (NS or EW) and the **vulnerability**.
-- **Scoring:** average score per contract, and a bidding-decision readout —
-  best game vs best slam by expected value, and the **expected IMP gain per
-  board** of bidding the slam.
-- Modern Windows-11 theme (`sv-ttk`) with a light/dark toggle; falls back to a
-  clean built-in theme if `sv-ttk` isn't installed.
-- **AI verdict** — an optional **🧠 Explain** button streams a plain-English
-  bridge verdict from Claude (bid slam or stop, the safety net, key drivers).
-  Enabled only when `ANTHROPIC_API_KEY` is set; the simulator itself needs no
-  network or key. Easiest way to enable it: paste your key into `apikey.txt`
-  (git-ignored) and double-click **`run_with_ai.bat`** (Windows).
-- Input validation, optional RNG **seed**, sample deals, and a **Stop** button
-  (rare constraints can't hang the app).
+- Every strain (♣/♦/♥/♠/NT) at game and slam level, plus grand-slam rate, with
+  average score and the **expected IMP gain per board** of bidding the slam.
+- **Decision-contract breakdown** (default): make-rate sliced by the constrained
+  hand's HCP, trump-support length, and short-suit (ruffing) value — targets the
+  slam when a slam is live, otherwise the game.
+- **Styled report inside the app:** rendered by QtWebEngine (Chromium), with a
+  **Log** tab for the raw text. **Save…** to `.html`/`.txt`, or **Open in
+  browser** for a full-window view. Light/dark toggle.
+- **Ask Claude:** type a question ("should North move with 18+ or good
+  distribution?") and the optional **🧠 Explain** answers it from the simulation
+  numbers; blank gives the standard bid/stop verdict. A **🧠 auto** option runs
+  it when each simulation finishes. Needs `ANTHROPIC_API_KEY` (the simulator
+  itself needs no network or key); easiest is to paste your key into `apikey.txt`
+  (git-ignored) and run **`run_with_ai.bat`** on Windows.
+- Input validation, optional RNG **seed**, sample deals, and a **Stop** button.
 - Fast: batched `CalcAllTables` across all cores solves ~32 full deals per DDS
-  call (~10 ms/deal), so 5,000 deals finish in about a minute.
+  call, and smart importance-sampling means no wasted deals (see below).
 
 ## How it works
 
-- **Deal generation:** [Redeal](https://github.com/anntzer/redeal) — with
-  **smartstack** importance sampling, so rare partner types (like 22–24
-  balanced) are generated directly instead of by slow rejection.
+- **Deal generation:** [Redeal](https://github.com/anntzer/redeal) with
+  **SmartStack** importance sampling. A constrained seat — balanced,
+  semi-balanced, *or* minimum-length like `5+♥ 4+♦` — is generated **directly**
+  rather than by slow rejection, so even rare partner types run at ~100%
+  acceptance. Any *second* constrained seat is handled by rejection (with a
+  try-cap so impossible constraints can't hang).
 - **Evaluation:** Bo Haglund & Søren Hein's **DDS** double-dummy solver
   (bundled with Redeal), the same engine behind most serious bridge software.
 
+## Project layout
+
+```
+bridge_mc/
+  domain/   pure data + rules (no redeal, no Qt)
+  engine/   DDS solver, deal sampling, the simulation loop
+  report/   HTML + text renderers
+  ai/       Claude "explain" prompt + stream
+  app/      PySide6 GUI
+  cli.py    headless entry point
+bridge_sim_gui.py   launcher shim (kept for the packaged build)
+```
+
+The domain and engine carry no UI dependency, so the simulation is usable (and
+testable) with no display.
+
 ## Install
 
-Requires **Python 3.8+**.
-
-Redeal is easiest to install straight from its repo (its DDS binaries ride
-along):
+Requires **Python 3.9+**.
 
 ```sh
-# macOS / Linux (needs git + libgomp)
-python -m pip install "git+https://github.com/anntzer/redeal"
-
-# Windows: download the main-branch ZIP from the Redeal repo and
-python -m pip install redeal-main.zip
+python -m pip install PySide6 anthropic
+python -m pip install "git+https://github.com/anntzer/redeal"   # bundles DDS
 ```
 
-The example scripts under `examples/` instead use
-[endplay](https://pypi.org/project/endplay/) (a pip-installable all-in-one that
-also bundles DDS):
-
-```sh
-python -m pip install endplay
-```
-
-## Standalone app (no Python needed)
-
-Prefer a double-click app? Grab the packaged build from the
-[Releases](https://github.com/prismark13/bridge-MC-simulator/releases) page
-(`BridgeMCSimulator.exe` on Windows) — it bundles Python, Tk, Redeal and the DDS
-solver into one file, so end users install nothing.
-
-Build it yourself:
-
-```powershell
-# Windows
-powershell -ExecutionPolicy Bypass -File build.ps1        # -> dist\BridgeMCSimulator.exe
-```
-```sh
-# macOS / Linux
-python -m pip install pyinstaller "git+https://github.com/anntzer/redeal"
-pyinstaller --noconfirm --onefile --windowed --name BridgeMCSimulator \
-    --collect-all redeal bridge_sim_gui.py                 # -> dist/BridgeMCSimulator
-```
-
-The `--collect-all redeal` flag is essential: it pulls Redeal's bundled DDS
-library into the frozen app. A GitHub Actions workflow
-(`.github/workflows/build.yml`) builds all three platforms automatically when a
-`v*` tag is pushed.
+On Windows, if `git` isn't handy, download Redeal's main-branch ZIP and
+`python -m pip install redeal-main.zip`. The `examples/` scripts instead use
+[endplay](https://pypi.org/project/endplay/) (`python -m pip install endplay`).
 
 ## Usage
 
 **GUI:**
 
 ```sh
-python bridge_sim_gui.py
+python bridge_sim_gui.py        # or:  python -m bridge_mc
 ```
 
 Each seat (N/E/S/W) has a **Mode**:
 
 - **Random** — dealt at random.
-- **Fixed** — type the exact 13 cards as `♠ ♥ ♦ ♣`, e.g. `AK5 QJT 9432 K8`
-  (`-` for a void).
-- **Constrain** — set an **HCP** range and a **Shape**:
-  - `bal` / `semibal` → balanced/semibalanced (fast — uses smartstack).
+- **Fixed** — the exact 13 cards as `♠ ♥ ♦ ♣`, e.g. `AK5 QJT 9432 K8` (`-` void).
+- **Constrain** — an **HCP** range and a **Shape**:
+  - `bal` / `semibal` → balanced / semi-balanced.
   - `any` → shape unconstrained (HCP only).
-  - four min-lengths `♠ ♥ ♦ ♣`, e.g. `0 5 4 0` = 5+♥ and 4+♦ (rejection sampling).
+  - four min-lengths `♠ ♥ ♦ ♣`, e.g. `0 5 4 0` = 5+♥ and 4+♦.
 
-Smartstack accelerates one balanced/semibalanced constrained seat; any other
-constrained seat is handled by rejection (with a try-cap so impossible
-constraints can't hang). Pick a deal count and hit **Run**. Results show every
-NS game and slam with 95% CIs, plus sample deals.
+One constrained seat is importance-sampled (any of the shapes above); pick a deal
+count and hit **Run**.
 
-**Headless examples:**
+**Headless CLI** (no Qt):
+
+```sh
+python -m bridge_mc.cli --fixed S "Q9643 J AT86 KQ4" --con N "16-21:0,5,4,0" -n 20000
+python -m bridge_mc.cli --fixed S "..." --con N "22-24:bal" --html report.html
+```
+
+**Example scripts:**
 
 ```sh
 python examples/sim_partner_5h4d.py     # 6D vs 3NT, partner 5+H/4+D 16-21
 python examples/sim_slam_finesse.py     # minor-suit slam + finesse-dependence test
 ```
+
+## Standalone app (no Python needed)
+
+Grab the packaged build from the
+[Releases](https://github.com/prismark13/bridge-MC-simulator/releases) page — a
+zipped one-folder app (`BridgeMCSimulator/BridgeMCSimulator.exe` on Windows) that
+bundles Python, Qt, Redeal and the DDS solver, so end users install nothing.
+
+Build it yourself:
+
+```powershell
+# Windows  ->  dist\BridgeMCSimulator\BridgeMCSimulator.exe
+powershell -ExecutionPolicy Bypass -File build.ps1
+```
+
+QtWebEngine ships a Chromium helper process, so the app is built one-folder
+(`--onedir`), not `--onefile`. A GitHub Actions workflow
+(`.github/workflows/build.yml`) builds and publishes all three platforms when a
+`v*` tag is pushed.
 
 ## A word on double-dummy numbers
 

@@ -3,8 +3,10 @@
 #   python -m pip install "git+https://github.com/anntzer/redeal"
 # redeal
 
-# Optional: modern Windows-11 theme for the GUI (falls back to ttk 'clam').
-sv-ttk
+# GUI toolkit: PySide6 (Qt). QtWebEngine (Chromium) renders the styled report
+# inside the window. The PySide6 metapackage pulls Essentials + Addons, which is
+# where QtWebEngineWidgets lives.
+PySide6>=6.6
 
 # Optional: enables the "Explain" button (Claude verdict). Needs ANTHROPIC_API_KEY.
 anthropic
