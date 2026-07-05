@@ -72,10 +72,12 @@ def render_text(result) -> str:
 
     s = result.sacrifice
     if s and s.save_bid and result.zone == "competitive":
-        L.append(f"\nSACRIFICE  ({result.side}: bid {s.save_bid} vs pass over {s.opp_game})")
+        from ..domain.contracts import is_game
+        head = "SACRIFICE" if is_game(s.opp_game) else "COMPETE"
+        L.append(f"\n{head}  ({result.side}: bid {s.save_bid} vs pass over {s.opp_game})")
         L.append(f"  always pass : avg {s.avg_pass:+.0f}")
         L.append(f"  always bid  : avg {s.avg_bid:+.0f}   (beats pass {s.bid_better*100:.0f}%)")
-        L.append(f"  → {'BID the save' if s.recommend_bid else 'PASS'} "
+        L.append(f"  → {'BID ' + s.save_bid if s.recommend_bid else 'PASS'} "
                  f"(by {abs(s.avg_bid-s.avg_pass):.0f}/board)")
 
     bd = result.breakdown

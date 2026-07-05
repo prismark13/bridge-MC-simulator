@@ -21,6 +21,16 @@ def side_vul(vul, side):
 def opp_side(side):
     return "EW" if side == "NS" else "NS"
 
+
+def is_game(label):
+    """Is a contract label a game (or higher), as opposed to a partscore?"""
+    if label.endswith("NT"):
+        return label[:-2].isdigit() and int(label[:-2]) >= 3
+    if len(label) >= 2 and label[:-1].isdigit():
+        lvl, s = int(label[:-1]), label[-1]
+        return (s in "HS" and lvl >= 4) or (s in "CD" and lvl >= 5)
+    return False
+
 #            label  strain  need  contract-string
 GAMES = [("3NT", "N", 9, "3N"), ("4H", "H", 10, "4H"), ("4S", "S", 10, "4S"),
          ("5C", "C", 11, "5C"), ("5D", "D", 11, "5D")]

@@ -10,7 +10,7 @@ import re
 from functools import lru_cache
 from importlib.resources import files
 
-from ..domain.contracts import ORDER, SUIT_SYM, SUITS, VUL_LABEL
+from ..domain.contracts import ORDER, SUIT_SYM, SUITS, VUL_LABEL, is_game
 from ..domain.types import SeatSpec
 
 _SUIT_SYM4 = ["♠", "♥", "♦", "♣"]
@@ -203,10 +203,11 @@ def _tiles(r, competitive, tone, game_pct, slam_pct, ev_diff):
                    'optimal competitive result',
                    "var(--good)" if (r.par and r.par.avg_us > 0) else "var(--warn)")
         if s and s.save_bid:
-            t += _tile(f'Save {_lab(s.save_bid)} vs pass',
+            act = "Save" if is_game(s.opp_game) else "Compete"
+            t += _tile(f'{act} {_lab(s.save_bid)} vs pass',
                        'Bid' if s.recommend_bid else 'Pass',
                        f'by {abs(s.avg_bid - s.avg_pass):.0f} pts/board', stone)
-            t += _tile('Save beats pass', f'{s.bid_better * 100:.0f}<i>%</i>',
+            t += _tile(f'{act} beats pass', f'{s.bid_better * 100:.0f}<i>%</i>',
                        'of deals')
         return t
     t = _tile(f'Best game <span class="tag">{_lab(bg.label)}</span>',
@@ -236,17 +237,21 @@ def _sacrifice_html(r):
     stone = "var(--good)" if s.recommend_bid else "var(--warn)"
     verdict = f"Bid {_lab(s.save_bid)}" if s.recommend_bid else "Pass"
     save = _lab(s.save_bid)
-    opp = _lab(s.opp_game) if s.opp_game else "their game"
+    opp = _lab(s.opp_game) if s.opp_game else "their contract"
+    # A save when they're in a game; a partscore competition otherwise.
+    save_over_game = is_game(s.opp_game)
+    word = "Sacrifice" if save_over_game else "Competitive"
+    kind = "sacrifice" if save_over_game else "overcall"
     return f"""
   <section>
-    <p class="kicker">Sacrifice decision · {r.side}: bid {save} or pass</p>
-    <h2>Save over {opp}, or pass?</h2>
+    <p class="kicker">{word} decision · {r.side}: bid {save} or pass</p>
+    <h2>{'Save' if save_over_game else 'Compete'} over {opp}, or pass?</h2>
     <p class="sec-lead">Average equity to {r.side} of always choosing each action, at
        {VUL_LABEL[r.vul]} vulnerability — the opponents double or bid on optimally.</p>
     <div class="two-col">
-      <div class="cside"><p class="k">Pass — let {r.opp_side} play</p>
+      <div class="cside"><p class="k">Pass — let {r.opp_side} play {opp}</p>
         <span class="pv">{s.avg_pass:+.0f}</span><span class="se">average equity</span></div>
-      <div class="cside"><p class="k">Bid {save} (sacrifice)</p>
+      <div class="cside"><p class="k">Bid {save} ({kind})</p>
         <span class="pv" style="color:{stone}">{s.avg_bid:+.0f}</span>
         <span class="se">average equity · beats passing on {s.bid_better * 100:.0f}% of deals</span></div>
     </div>

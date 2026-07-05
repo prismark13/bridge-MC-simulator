@@ -38,28 +38,41 @@ def contract_score(level, strain, tricks, vul, doubled):
 
 # Bidding rank of a strain within a level (NT highest).
 _RANK = {"C": 0, "D": 1, "H": 2, "S": 3, "N": 4}
-#            level, strain, label — the games either side might buy the hand in.
-_GAMES = [(3, "N", "3NT"), (4, "H", "4H"), (4, "S", "4S"),
-          (5, "C", "5C"), (5, "D", "5D")]
+_GAME_LVL = {"N": 3, "S": 4, "H": 4, "D": 5, "C": 5}
+
+
+def _label(lvl, st):
+    return f"{lvl}{'NT' if st == 'N' else st}"
+
+
+def _practical_best(tr, vul):
+    """The contract a side would buy the hand in: their game if they can make
+    one, else their best partscore. -> (score, level, strain, label)."""
+    best = (-10 ** 9, 0, None, "")
+    for st in ("N", "S", "H", "D", "C"):
+        t = tr[st]
+        if t < 7:                       # can't make even a 1-level contract
+            continue
+        gl = _GAME_LVL[st]
+        lvl = gl if t >= 6 + gl else t - 6      # game if makeable, else partscore
+        sc = contract_score(lvl, st, t, vul, False)
+        if sc > best[0]:
+            best = (sc, lvl, st, _label(lvl, st))
+    return best
 
 
 def sacrifice_deal(us, them, v_us, v_them):
-    """One deal's 'bid the save vs pass' equity, from *our* perspective.
+    """One deal's 'compete/save vs pass' equity, from *our* perspective.
 
-    ``us``/``them`` are {strain: DD tricks}. Model: they buy it in their
-    best-scoring game; we can bid the cheapest legal save in our best strain
-    (doubled); they then take their best counter — double our save, or bid on
-    to a major/NT (which we double when beatable). Returns
-    (pass_eq, bid_eq, save_label, opp_game_label).
+    They buy it in their best makeable contract (their game if they have one,
+    otherwise their best partscore). We can bid the cheapest legal contract over
+    it in our best strain (doubled); they then double it or bid on (we double
+    when beatable). Returns (pass_eq, bid_eq, our_label, opp_label) — a save when
+    they're in game, a partscore competition when they're in a partscore.
     """
-    # Their best game (what we're defending against if we pass).
-    opp_lvl = opp_st = None
-    opp_score = -10 ** 9
-    opp_lab = ""
-    for lvl, strn, lab in _GAMES:
-        sc = contract_score(lvl, strn, them[strn], v_them, False)
-        if sc > opp_score:
-            opp_score, opp_lvl, opp_st, opp_lab = sc, lvl, strn, lab
+    opp_score, opp_lvl, opp_st, opp_lab = _practical_best(them, v_them)
+    if opp_st is None:                  # they make nothing (very rare)
+        return 0.0, 0.0, "", "—"
     pass_eq = -opp_score
 
     best_eq = -10 ** 9
@@ -68,9 +81,12 @@ def sacrifice_deal(us, them, v_us, v_them):
         lc = opp_lvl if _RANK[scs] > _RANK[opp_st] else opp_lvl + 1
         if lc > 7:
             continue
-        ours = contract_score(lc, scs, us[scs], v_us, True)   # they double our save
+        # They double us only when that's worse for us (i.e. we're going down);
+        # if we make it they leave it undoubled.
+        ours = min(contract_score(lc, scs, us[scs], v_us, False),
+                   contract_score(lc, scs, us[scs], v_us, True))
         bidon = -10 ** 9                                       # or they bid on
-        for ns in ("N", "S", "H"):
+        for ns in ("N", "S", "H", "D", "C"):
             lt2 = lc if _RANK[ns] > _RANK[scs] else lc + 1
             if lt2 > 7:
                 continue
@@ -79,5 +95,5 @@ def sacrifice_deal(us, them, v_us, v_them):
         eq = min(ours, -bidon) if bidon > -10 ** 9 else ours
         if eq > best_eq:
             best_eq = eq
-            best_lab = f"{lc}{'NT' if scs == 'N' else scs}"
+            best_lab = _label(lc, scs)
     return pass_eq, best_eq, best_lab, opp_lab

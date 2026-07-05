@@ -94,11 +94,13 @@ def build_prompt(result, question: str = "") -> str:
                  f"par action on {p.sac_rate*100:.0f}% of boards; typical par: {tops}.")
     s = result.sacrifice
     if s and s.save_bid and result.zone == "competitive":
-        L.append(f"Sacrifice decision ({us}: bid {s.save_bid} vs pass over "
-                 f"{s.opp_game}): if {us} ALWAYS pass, average equity {s.avg_pass:+.0f}; "
+        from ..domain.contracts import is_game
+        kind = "sacrifice over their game" if is_game(s.opp_game) else "partscore competition"
+        L.append(f"Competitive decision ({kind}) for {us}: bid {s.save_bid} vs pass over "
+                 f"{s.opp_game}. If {us} ALWAYS pass, average equity {s.avg_pass:+.0f}; "
                  f"if {us} ALWAYS bid {s.save_bid}, average {s.avg_bid:+.0f} (opponents "
                  f"double or bid on optimally), which beats passing on {s.bid_better*100:.0f}% "
-                 f"of deals. So on average {'bidding the save' if s.recommend_bid else 'passing'} is better.")
+                 f"of deals. So on average {'bidding' if s.recommend_bid else 'passing'} is better.")
 
     bd = result.breakdown
     if bd and bd.by_hcp:

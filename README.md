@@ -62,8 +62,10 @@ hands should accept a slam try and which should sign off.
   breakdown on constructive deals; on a competitive deal it drops the slam
   content and shows the sides side-by-side instead.
 - **Competitive tools:** DDS **par** (optimal result with doubled sacrifices),
-  and a **Sacrifice EV** panel — the average equity of bidding your save vs
-  passing, with the opponents doubling or bidding on optimally.
+  and a **compete-vs-pass EV** panel — the average equity of bidding vs passing,
+  with the opponents doubling or bidding on optimally. It adapts to the deal:
+  a **sacrifice** over their game, or a **partscore competition / overcall** when
+  they're only in a partscore.
 - **Styled report inside the app:** rendered by QtWebEngine (Chromium), with a
   **Log** tab for the raw text. **Save…** to `.html`/`.txt`, or **Open in
   browser** for a full-window view. Light/dark toggle.
