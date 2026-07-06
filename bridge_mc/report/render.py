@@ -163,6 +163,39 @@ def _par_contract(c):
     return " / ".join(a for a in alts if a)
 
 
+def _finesse_html(r):
+    if not r.finesse:
+        return ""
+    seen, picks = set(), []
+    for c in (r.best_game, r.best_slam, r.best_grand):
+        if c and c.label not in seen and c.make_rate >= 8:
+            seen.add(c.label); picks.append(c)
+    if not picks:
+        return ""
+
+    def row(c):
+        return (f'<tr><td class="lab">{_lab(c.label)}</td>'
+                f'<td class="pct">{c.make_rate:.0f}%</td>'
+                f'<td>{_bar(c.proof_rate)}</td>'
+                f'<td class="pct" style="color:var(--good)">{c.proof_rate:.0f}%</td>'
+                f'<td class="sc">{c.sens_rate:.0f}%</td></tr>')
+    rows = "".join(row(c) for c in picks)
+    return f"""
+  <section>
+    <p class="kicker">Card placement · finesse dependence</p>
+    <h2>How much of it hinges on where the cards sit</h2>
+    <p class="sec-lead">Each deal is re-solved with the defenders (East/West) swapped.
+       <b>Position-proof</b> makes no matter how the defenders' cards lie;
+       <b>hinges on placement</b> is the slice that flips on the swap — a finesse or endplay
+       you'd have to read at the table. (A pure two-way guess reads as position-proof, so
+       this is a floor, not a single-dummy number.)</p>
+    <div class="tbl-wrap"><table>
+      <thead><tr><th>Contract</th><th>Makes (DD)</th><th>&nbsp;</th><th>Position-proof</th>
+        <th style="text-align:right">Hinges</th></tr></thead>
+      <tbody>{rows}</tbody></table></div>
+  </section>"""
+
+
 def _breakdown_html(bd):
     if not bd or not bd.by_hcp:
         return ""
@@ -389,6 +422,8 @@ def render_html(result, theme: str = "light") -> str:
   {_competitive_html(result)}
 
   {_sacrifice_html(result) if competitive else ""}
+
+  {_finesse_html(result)}
 
   {_breakdown_html(result.breakdown)}
 

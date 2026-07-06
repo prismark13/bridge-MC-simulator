@@ -38,7 +38,7 @@ def build_config(args):
     max_tries = max(args.deals * 500, 2_000_000) if rej else args.deals
     return SimConfig(specs=specs, n=args.deals, max_tries=max_tries,
                      seed=args.seed, side=args.side, vul=args.vul,
-                     n_samples=args.samples)
+                     n_samples=args.samples, finesse=args.finesse)
 
 
 def main(argv=None):
@@ -55,6 +55,8 @@ def main(argv=None):
     p.add_argument("--vul", choices=["None", "NS", "EW", "Both"], default="None",
                    help="board vulnerability")
     p.add_argument("--samples", type=int, default=4)
+    p.add_argument("--finesse", action="store_true",
+                   help="assess card placement (re-solve with E/W swapped; ~2x slower)")
     p.add_argument("--html", metavar="PATH", help="write an HTML report instead of text")
     args = p.parse_args(argv)
 

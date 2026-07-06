@@ -67,6 +67,7 @@ class SimConfig:
     side: str = "NS"       # protagonist side ("us"); the other side is "them"
     vul: str = "None"      # board vulnerability: None / NS / EW / Both
     n_samples: int = 6
+    finesse: bool = False  # also solve the E/W-swapped deal to split position-proof vs -sensitive
 
 
 @dataclass(frozen=True)
@@ -83,6 +84,8 @@ class ContractStat:
     makes: int
     trials: int
     avg_score: float | None = None        # None for summary rows (any game / grand)
+    proof: int = 0                        # makes regardless of the E/W split (position-proof)
+    sens: int = 0                         # makes in exactly one E/W orientation (card-placement dependent)
 
     @property
     def make_rate(self) -> float:
@@ -92,6 +95,14 @@ class ContractStat:
     def ci95(self) -> float:
         p = self.make_rate
         return 1.96 * (p * (100 - p) / self.trials) ** 0.5 if self.trials else 0.0
+
+    @property
+    def proof_rate(self) -> float:
+        return 100 * self.proof / self.trials if self.trials else 0.0
+
+    @property
+    def sens_rate(self) -> float:
+        return 100 * self.sens / self.trials if self.trials else 0.0
 
 
 @dataclass(frozen=True)
@@ -165,6 +176,7 @@ class SimResult:
     par: "Par | None" = None
     zone: str = "game"     # "slam" | "game" | "competitive" — which analysis fits
     sacrifice: "Sacrifice | None" = None
+    finesse: bool = False  # whether the position-proof / -sensitive split was computed
 
     @property
     def empty(self) -> bool:

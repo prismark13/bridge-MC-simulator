@@ -89,11 +89,13 @@ class _Acc:
         return st
 
 
-def _stats(acc, accepted):
+def _stats(acc, accepted, pos=None):
     """Turn an accumulator into ContractStats + best game/slam + EV/IMP."""
     def stat(lab, scored):
+        pr, se = pos.get(lab, (0, 0)) if pos else (0, 0)
         return ContractStat(lab, acc.make[lab], accepted,
-                            acc.score[lab] / accepted if scored else None)
+                            acc.score[lab] / accepted if scored else None,
+                            proof=pr, sens=se)
 
     games = [stat(g[0], True) for g in GAMES]
     slams = [stat(s[0], True) for s in SLAMS]
@@ -177,6 +179,10 @@ def run(config, solver=None, progress=lambda a, t: None, stop=lambda: False):
     par_sac = 0
     par_ctr = Counter()
 
+    _all = GAMES + SLAMS + GRANDS
+    pos_both = {lab: 0 for lab, *_ in _all}     # makes regardless of the E/W split
+    pos_one = {lab: 0 for lab, *_ in _all}      # makes in exactly one orientation
+
     samples, pending = [], []
     accepted = candidates = tries = 0
 
@@ -184,9 +190,22 @@ def run(config, solver=None, progress=lambda a, t: None, stop=lambda: False):
         nonlocal accepted, par_sum, par_sac, sac_pass, sac_bid, sac_better
         if not pending:
             return
-        for deal, (tv, par) in zip(pending, solver.solve_full(pending, par_vul)):
+        full = solver.solve_full(pending, par_vul)
+        # For the finesse split, also DD-solve each deal with East/West swapped.
+        sw = (solver.solve([(d.north, d.west, d.south, d.east) for d in pending])
+              if config.finesse else None)
+        for idx, (deal, (tv, par)) in enumerate(zip(pending, full)):
             st_us = us.add(tv)
             them_st = them.add(tv)
+            if sw is not None:
+                swt = sw[idx]
+                for lab, strain, need, cs in _all:
+                    nm = st_us[strain] >= need
+                    sm = max(swt[strain][us.a], swt[strain][us.b]) >= need
+                    if nm and sm:
+                        pos_both[lab] += 1
+                    elif nm or sm:
+                        pos_one[lab] += 1
             pe, be, lab, olab = sacrifice_deal(st_us, them_st, vul_us, vul_them)
             sac_pass += pe; sac_bid += be; sac_better += be > pe
             sac_lab[lab] += 1; sac_opp[olab] += 1
@@ -228,7 +247,9 @@ def run(config, solver=None, progress=lambda a, t: None, stop=lambda: False):
     if accepted == 0:
         return SimResult(config=config, accepted=0, tries=tries)
 
-    U = _stats(us, accepted)
+    pos = ({lab: (pos_both[lab], pos_one[lab]) for lab in pos_both}
+           if config.finesse else None)
+    U = _stats(us, accepted, pos)
     T = _stats(them, accepted)
 
     par = Par(avg_us=par_sum / accepted, sac_rate=par_sac / accepted,
@@ -265,4 +286,4 @@ def run(config, solver=None, progress=lambda a, t: None, stop=lambda: False):
         samples=samples, breakdown=breakdown,
         opp_games=T["games"], opp_slams=T["slams"],
         opp_best_game=T["best_game"], opp_best_slam=T["best_slam"],
-        par=par, zone=zone, sacrifice=sacrifice)
+        par=par, zone=zone, sacrifice=sacrifice, finesse=config.finesse)

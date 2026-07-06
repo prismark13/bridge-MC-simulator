@@ -130,6 +130,9 @@ class MainWindow(QMainWindow):
         self.auto_cb = QCheckBox("🧠 auto")
         self.auto_cb.setToolTip("Ask Claude automatically when a run finishes")
         o.addWidget(self.auto_cb)
+        self.finesse_cb = QCheckBox("finesse")
+        self.finesse_cb.setToolTip("Assess card placement (re-solve with E/W swapped) — ~2x slower")
+        o.addWidget(self.finesse_cb)
         o.addStretch(1)
         root.addWidget(opt)
 
@@ -221,6 +224,7 @@ class MainWindow(QMainWindow):
         self.seed.clear()
         self.samples_cb.setChecked(True)
         self.auto_cb.setChecked(False)
+        self.finesse_cb.setChecked(False)
         self.ask.setText(DEFAULT_ASK)
         self.last_result = None
         self.last_html = None
@@ -276,7 +280,8 @@ class MainWindow(QMainWindow):
         config = SimConfig(
             specs=specs, n=n, max_tries=max_tries, seed=self.seed.text().strip(),
             side=self.side.currentText(), vul=self._vul_state(),
-            n_samples=6 if self.samples_cb.isChecked() else 0)
+            n_samples=6 if self.samples_cb.isChecked() else 0,
+            finesse=self.finesse_cb.isChecked())
 
         # Clear the previous analysis so stale results aren't shown mid-run.
         self.last_result = None

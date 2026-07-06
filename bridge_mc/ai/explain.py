@@ -113,6 +113,13 @@ def build_prompt(result, question: str = "") -> str:
         if bd.by_short:
             L.append(f"  by shortest side-suit: {slices(bd.by_short)}")
 
+    if result.finesse:
+        c = result.best_slam if result.bid_slam else result.best_game
+        if c:
+            L.append(f"Card placement (deals re-solved with E/W swapped): {c.label} is "
+                     f"{c.proof_rate:.0f}% position-proof (makes however the defenders' cards lie) "
+                     f"and {c.sens_rate:.0f}% hinges on reading the cards; a pure two-way guess "
+                     f"reads as position-proof, so position-proof is a floor.")
     L.append(f"Reading the numbers: make% is how often the DECLARING side takes enough "
              f"tricks; the score in parentheses is that side's average points, so a "
              f"positive {them} score is a loss for {us}. Par is from {us}'s view "

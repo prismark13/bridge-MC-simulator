@@ -61,6 +61,10 @@ hands should accept a slam try and which should sign off.
   deal and shows the pane that fits — slam-vs-game and a *which-hands-bid-on*
   breakdown on constructive deals; on a competitive deal it drops the slam
   content and shows the sides side-by-side instead.
+- **Card-placement / finesse split** (optional): re-solves each deal with the
+  defenders swapped to show how much of a contract is **position-proof** (makes
+  however the cards lie) vs **hinging on card placement** (a finesse/endplay you
+  must read) — useful for choosing between two contracts of equal DD make-rate.
 - **Competitive tools:** DDS **par** (optimal result with doubled sacrifices),
   and a **compete-vs-pass EV** panel — the average equity of bidding vs passing,
   with the opponents doubling or bidding on optimally. It adapts to the deal:

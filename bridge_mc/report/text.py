@@ -93,6 +93,15 @@ def render_text(result) -> str:
         if bd.by_short:
             line("by shape", bd.by_short)
 
+    if result.finesse:
+        L.append("\nCARD PLACEMENT  (E/W swap)")
+        seen = set()
+        for c in (result.best_game, result.best_slam, result.best_grand):
+            if c and c.label not in seen and c.make_rate >= 8:
+                seen.add(c.label)
+                L.append(f"  {c.label:<4} DD {c.make_rate:4.0f}%   position-proof "
+                         f"{c.proof_rate:4.0f}%   hinges on placement {c.sens_rate:4.0f}%")
+
     if result.samples:
         L.append("\nSAMPLE DEALS")
         for sd in result.samples:
