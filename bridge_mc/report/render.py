@@ -11,6 +11,7 @@ from functools import lru_cache
 from importlib.resources import files
 
 from ..domain.contracts import ORDER, SUIT_SYM, SUITS, VUL_LABEL, is_game
+from ..domain.decision import decide
 from ..domain.types import SeatSpec
 
 _SUIT_SYM4 = ["♠", "♥", "♦", "♣"]
@@ -68,6 +69,14 @@ def _honor_desc(sp):
         bits.append(f'{sp.ctrl_lo}+ ctrl' if sp.ctrl_hi >= 12
                     else f'{sp.ctrl_lo}-{sp.ctrl_hi} ctrl')
     return " · ".join(bits)
+
+
+_LABIFY_RE = re.compile(r"(?<!\w)([1-7])(NT|[SHDC])(?!\w)")
+
+
+def _labify(text):
+    """Suit-symbolise contract labels (6H -> 6♥, 3NT stays) inside prose."""
+    return _LABIFY_RE.sub(lambda m: _lab(m.group(0)), text)
 
 
 def _seat_spec(sp):
@@ -165,6 +174,9 @@ def _par_contract(c):
 
 def _finesse_html(r):
     if not r.finesse:
+        if r.finesse_note:
+            return (f'  <section><p class="kicker">Card placement · finesse</p>'
+                    f'<p class="sec-lead">{r.finesse_note}</p></section>')
         return ""
     seen, picks = set(), []
     for c in (r.best_game, r.best_slam, r.best_grand):
@@ -175,22 +187,22 @@ def _finesse_html(r):
 
     def row(c):
         return (f'<tr><td class="lab">{_lab(c.label)}</td>'
-                f'<td class="pct">{c.make_rate:.0f}%</td>'
+                f'<td class="pct">{c.make_rate:.0f}% '
+                f'<span class="se">({c.proof_rate:.0f}% floor)</span></td>'
                 f'<td>{_bar(c.proof_rate)}</td>'
-                f'<td class="pct" style="color:var(--good)">{c.proof_rate:.0f}%</td>'
                 f'<td class="sc">{c.sens_rate:.0f}%</td></tr>')
     rows = "".join(row(c) for c in picks)
     return f"""
   <section>
     <p class="kicker">Card placement · finesse dependence</p>
     <h2>How much of it hinges on where the cards sit</h2>
-    <p class="sec-lead">Each deal is re-solved with the defenders (East/West) swapped.
-       <b>Position-proof</b> makes no matter how the defenders' cards lie;
-       <b>hinges on placement</b> is the slice that flips on the swap — a finesse or endplay
-       you'd have to read at the table. (A pure two-way guess reads as position-proof, so
-       this is a floor, not a single-dummy number.)</p>
+    <p class="sec-lead">Each deal is re-solved with the defenders swapped. The make-rate shows
+       <b>double-dummy % (single-dummy floor %)</b> — the floor is <b>position-proof</b>: makes
+       however the defenders' cards lie. <b>Hinges</b> is the slice that flips on the swap — a
+       finesse/endplay you'd have to read. (A pure two-way guess reads as position-proof, so the
+       floor is optimistic for those, not a strict single-dummy number.)</p>
     <div class="tbl-wrap"><table>
-      <thead><tr><th>Contract</th><th>Makes (DD)</th><th>&nbsp;</th><th>Position-proof</th>
+      <thead><tr><th>Contract</th><th>DD % (floor %)</th><th>&nbsp;</th>
         <th style="text-align:right">Hinges</th></tr></thead>
       <tbody>{rows}</tbody></table></div>
   </section>"""
@@ -294,6 +306,68 @@ def _sacrifice_html(r):
   </section>"""
 
 
+def _auction_calls(auction: str) -> str:
+    """Pretty-print raw calls: '1D P 1H X' -> '1♦ Pass 1♥ Dbl'."""
+    out = []
+    for tok in auction.split():
+        t = tok.upper()
+        if t in ("P", "PASS"):
+            out.append("Pass")
+        elif t in ("X", "DBL"):
+            out.append("Dbl")
+        elif t in ("XX", "RDBL"):
+            out.append("Rdbl")
+        else:
+            out.append(_labify(t))
+    return "&nbsp; ".join(out)
+
+
+def _auction_html(r):
+    a = r.auction
+    if not a:
+        return ""
+    con = _lab(a.contract)
+    dbl = {0: "", 1: " ×", 2: " ××"}[a.doubled]
+    lead = (f'<p class="sec-lead">Dealer {r.config.dealer}. '
+            f'<span class="mono">{_auction_calls(r.config.auction)}</span></p>')
+    if not a.on_our_side:
+        return f"""
+  <section>
+    <p class="kicker">The auction · who declares</p>
+    <h2>This auction lands in {con}{dbl} — {a.side}'s contract</h2>
+    {lead}
+    <p class="sec-lead">Played by <b>{a.declarer}</b> — the opponents' hand. See the
+       competitive picture below for what it's worth to you.</p>
+  </section>"""
+    tone = "var(--warn)" if a.wrong_side else "var(--good)"
+    if a.wrong_side:
+        verdict = (f"Wrong side — {con} is stuck in {a.declarer}'s hand, "
+                   f"{abs(a.swing):.0f} points of make-rate worse than if {a.partner} "
+                   f"could play it. The auction can't get the lead coming up to the tenaces.")
+    elif a.swing > 3:
+        verdict = (f"Right side — {a.declarer} is the better declarer for {con} "
+                   f"by {abs(a.swing):.0f} points.")
+    else:
+        verdict = f'Either hand plays {con} about equally — declarer barely matters here.'
+    return f"""
+  <section>
+    <p class="kicker">The auction · who declares</p>
+    <h2>Your auction makes {a.declarer} the declarer of {con}{dbl}</h2>
+    {lead}
+    <div class="two-col">
+      <div class="cside"><p class="k">As played — {a.declarer} declares</p>
+        <span class="pv" style="color:{tone}">{a.dec_rate:.0f}%</span>
+        <span class="se">the reachable make-rate</span></div>
+      <div class="cside"><p class="k">If {a.partner} could declare</p>
+        <span class="pv">{a.par_rate:.0f}%</span>
+        <span class="se">not reachable in this auction</span></div>
+    </div>
+    <div class="par"><span class="k">Declarer swing</span>
+      <span class="pv" style="color:{tone}">{a.swing:+.0f}%</span>
+      <span class="se">{verdict}</span></div>
+  </section>"""
+
+
 def render_html(result, theme: str = "light") -> str:
     specs = result.config.specs if result.config else {}
     head = (f'<!doctype html><html data-theme="{theme}"><head><meta charset="utf-8">'
@@ -310,46 +384,22 @@ def render_html(result, theme: str = "light") -> str:
     opp = result.opp_side
     vul = f"vul {VUL_LABEL[result.vul]}"
     bg, bs = result.best_game, result.best_slam
-    og = result.opp_best_game
     ev_diff = result.ev_diff
-    bid_slam = result.bid_slam
     slam_pct, game_pct = bs.make_rate, bg.make_rate
-    imp_txt = f" · {result.imp:+.2f} IMP/board" if result.imp is not None else ""
 
-    # Which pane fits this deal set (slam / game / competitive), from the engine.
-    competitive = result.zone == "competitive" and og is not None
-
-    gr = result.best_grand
-    if competitive:
-        tone = "var(--warn)"
-        hero_pct = og.make_rate
-        h1 = f"They own this hand &mdash; {opp} make {_lab(og.label)}"
-        parbit = ""
-        if result.par:
-            parbit = (f' Par is <span class="em">{result.par.avg_us:+.0f}</span> to you, and a '
-                      f'sacrifice is par on {result.par.sac_rate*100:.0f}% of boards.')
-        say = (f'Your best is only {_lab(bg.label)} at {bg.make_rate:.0f}% — this is a '
-               f'competitive decision (compete / sacrifice / defend), not a constructive one.'
-               f'{parbit}')
-    elif result.bid_grand:
-        tone = "var(--good)"
-        hero_pct = gr.make_rate
-        h1 = f"Bid the grand &mdash; {_lab(gr.label)}"
-        say = (f'7-level {_lab(gr.label)} makes {gr.make_rate:.0f}% — nearly as often as the '
-               f'small slam {_lab(bs.label)} ({slam_pct:.0f}%) — so it beats it by '
-               f'<span class="em">{gr.avg_score - bs.avg_score:+.0f} pts</span>. Don\'t stop in six.')
-    elif bid_slam:
-        tone = "var(--good)"
-        hero_pct = slam_pct
-        h1 = f"Bid the slam &mdash; {_lab(bs.label)}"
-        say = (f'6-level {_lab(bs.label)} makes this often, and it beats the best game '
-               f'by <span class="em">{ev_diff:+.0f} pts{imp_txt}</span>.')
-    else:
-        tone = "var(--warn)"
-        hero_pct = game_pct
-        h1 = f"Game is the limit &mdash; {_lab(bg.label)}"
-        say = (f'The best game {_lab(bg.label)} is the ceiling — the slam '
-               f'<span class="em">loses {ev_diff:+.0f} pts</span> to it.')
+    # One Decision drives the hero + which pane leads (see domain/decision.py).
+    d = decide(result)
+    competitive = d.axis == "competitive"
+    tone = f"var(--{d.tone})"
+    hero_pct = d.headline
+    h1 = f"{d.verb} {_lab(d.contract)}"
+    say = _labify(d.detail)
+    conf_badge = ""
+    if d.confidence:
+        ct = {"High": "good", "Medium": "muted", "Low": "warn"}[d.confidence]
+        conf_badge = (f'<div class="conf conf-{ct}">Confidence <b>{d.confidence}</b>'
+                      f' &middot; {d.solidity:.0f}% of {_lab(d.contract)} is position-proof; '
+                      f'the rest rides on card placement</div>')
 
     tiles = _tiles(result, competitive, tone, game_pct, slam_pct, ev_diff)
 
@@ -394,13 +444,16 @@ def render_html(result, theme: str = "light") -> str:
       <b>{hero_pct:.0f}<i>%</i></b>
       <span class="say">{say}</span>
     </div>
+    {conf_badge}
   </header>
 
   <section>
-    <p class="kicker">{"The picture at a glance" if competitive else f"Contract success · {side}, better declarer"}</p>
+    <p class="kicker">{"The picture at a glance" if competitive else f"Contract success · {side}, realistic declarer"}</p>
     <h2>{"Their hand — your options" if competitive else f"How often {side}'s contracts make"}</h2>
     <div class="tiles">{tiles}</div>
   </section>
+
+  {_auction_html(result)}
 
   <section>
     <p class="kicker">The deal setup</p>
@@ -433,6 +486,7 @@ def render_html(result, theme: str = "light") -> str:
     <div class="method">
       <span>ENGINE · bundled DDS (Bo Haglund)</span>
       <span>DEALS · {n:,} of {tries:,} tries · {result.accept_rate:.1f}% accepted</span>
+      <span>DECLARER · suit = long-trump hand · NT = better hand</span>
       <span>ANALYSING · {side} vs {opp} · {vul}</span>
     </div>
     <b>Double-dummy (perfect-play) figures.</b> Real single-dummy results typically run a few

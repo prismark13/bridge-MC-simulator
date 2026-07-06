@@ -24,15 +24,17 @@ from .theming import apply_palette
 from .workers import AiWorker, SimWorker
 
 DEFAULTS = {
-    "N": ("Fixed", "AKQ Q987 64 AQJ5", 0, 37, "any"),
+    "N": ("Fixed", "AJ8 2 A9732 AKT5", 0, 37, "any"),
     "E": ("Random", "", 0, 37, "any"),
-    "S": ("Fixed", "876 AJT65 A7 K76", 0, 37, "any"),
-    "W": ("Constrain", "", 3, 7, "0 0 6 0"),
+    "S": ("Fixed", "Q65 AQJT84 KQ 63", 0, 37, "any"),
+    "W": ("Random", "", 0, 37, "any"),
 }
 DEFAULT_SIDE = "NS"
-DEFAULT_VUL = "Both"
+DEFAULT_VUL = "None"
 DEFAULT_DEALS = 2000
-DEFAULT_ASK = "should we bid the grand or stop in the small slam"
+DEFAULT_DEALER = "N"
+DEFAULT_AUCTION = "1D P 1H P 3H P 6H P P P"
+DEFAULT_ASK = "which slam is best — 6NT or 6H — and how safe is it?"
 MODES = ["Random", "Fixed", "Constrain"]
 
 
@@ -130,11 +132,31 @@ class MainWindow(QMainWindow):
         self.auto_cb = QCheckBox("🧠 auto")
         self.auto_cb.setToolTip("Ask Claude automatically when a run finishes")
         o.addWidget(self.auto_cb)
-        self.finesse_cb = QCheckBox("finesse")
-        self.finesse_cb.setToolTip("Assess card placement (re-solve with E/W swapped) — ~2x slower")
+        self.finesse_cb = QCheckBox("confidence")
+        self.finesse_cb.setChecked(True)
+        self.finesse_cb.setToolTip("Card-placement / finesse confidence (re-solves with the "
+                                   "defenders swapped) — ~2x slower; uncheck for speed")
         o.addWidget(self.finesse_cb)
         o.addStretch(1)
         root.addWidget(opt)
+
+        auc_row = QHBoxLayout()
+        auc_lbl = QLabel("Auction"); auc_lbl.setStyleSheet("color:#888;")
+        auc_row.addWidget(auc_lbl)
+        auc_row.addWidget(QLabel("dealer"))
+        self.dealer = QComboBox(); self.dealer.addItems(ORDER)
+        self.dealer.setCurrentText(DEFAULT_DEALER)
+        self.dealer.setToolTip("Who makes the first call")
+        auc_row.addWidget(self.dealer)
+        self.auction = QLineEdit(); self.auction.setText(DEFAULT_AUCTION)
+        self.auction.setPlaceholderText(
+            "calls e.g. 1D P 1H P 4H P P P — fixes who declares; blank = best declarer")
+        self.auction.setToolTip(
+            "Space-separated calls from the dealer (P=pass, X=dbl, XX=rdbl). The final "
+            "contract is scored from the seat that actually declares it, with the "
+            "'wrong side' cost shown.")
+        auc_row.addWidget(self.auction, 1)
+        root.addLayout(auc_row)
 
         act = QHBoxLayout()
         self.run_btn = QPushButton("Run"); self.run_btn.setDefault(True)
@@ -221,10 +243,12 @@ class MainWindow(QMainWindow):
         self.side.setCurrentText(DEFAULT_SIDE)
         self.vul.setCurrentText(VUL_LABEL[DEFAULT_VUL])
         self.ndeals.setValue(DEFAULT_DEALS)
+        self.dealer.setCurrentText(DEFAULT_DEALER)
+        self.auction.setText(DEFAULT_AUCTION)
         self.seed.clear()
         self.samples_cb.setChecked(True)
         self.auto_cb.setChecked(False)
-        self.finesse_cb.setChecked(False)
+        self.finesse_cb.setChecked(True)
         self.ask.setText(DEFAULT_ASK)
         self.last_result = None
         self.last_html = None
@@ -281,7 +305,8 @@ class MainWindow(QMainWindow):
             specs=specs, n=n, max_tries=max_tries, seed=self.seed.text().strip(),
             side=self.side.currentText(), vul=self._vul_state(),
             n_samples=6 if self.samples_cb.isChecked() else 0,
-            finesse=self.finesse_cb.isChecked())
+            finesse=self.finesse_cb.isChecked(),
+            dealer=self.dealer.currentText(), auction=self.auction.text().strip())
 
         # Clear the previous analysis so stale results aren't shown mid-run.
         self.last_result = None

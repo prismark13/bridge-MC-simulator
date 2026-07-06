@@ -68,6 +68,8 @@ class SimConfig:
     vul: str = "None"      # board vulnerability: None / NS / EW / Both
     n_samples: int = 6
     finesse: bool = False  # also solve the E/W-swapped deal to split position-proof vs -sensitive
+    dealer: str = "N"      # who makes the first call, for an explicit auction
+    auction: str = ""      # space-separated calls, e.g. "1D P 1H P 4H P P P" — fixes the declarer
 
 
 @dataclass(frozen=True)
@@ -151,6 +153,45 @@ class Breakdown:
 
 
 @dataclass(frozen=True)
+class AuctionResult:
+    """The declarer an explicit auction installs, and what it costs.
+
+    The double-dummy engine can play a contract from either hand of a side, but
+    a real auction fixes the declarer (the side's first bidder of the final
+    strain). On hands where the long suit sits opposite the tenaces, the seat
+    that ends up playing it can make far fewer tricks than the other — this
+    captures that gap so the report shows the *reachable* number, not the best.
+    """
+    contract: str          # e.g. "6H" (level + strain, strain "NT" spelled out)
+    declarer: str          # seat the auction installs, e.g. "S"
+    partner: str           # the other seat of that side
+    side: str              # "NS" / "EW"
+    on_our_side: bool      # whether the declaring side is the protagonist side
+    doubled: int           # 0 / 1 (doubled) / 2 (redoubled)
+    dec_makes: int         # deals the contract makes as actually declared
+    par_makes: int         # deals it would make if partner declared instead
+    trials: int
+
+    @property
+    def dec_rate(self) -> float:
+        return 100 * self.dec_makes / self.trials if self.trials else 0.0
+
+    @property
+    def par_rate(self) -> float:
+        return 100 * self.par_makes / self.trials if self.trials else 0.0
+
+    @property
+    def swing(self) -> float:
+        """Points of make-rate gained (+) or lost (-) by declaring from this seat."""
+        return self.dec_rate - self.par_rate
+
+    @property
+    def wrong_side(self) -> bool:
+        """The auction installs the materially worse declarer."""
+        return self.swing < -3
+
+
+@dataclass(frozen=True)
 class SimResult:
     config: SimConfig
     accepted: int
@@ -177,6 +218,8 @@ class SimResult:
     zone: str = "game"     # "slam" | "game" | "competitive" — which analysis fits
     sacrifice: "Sacrifice | None" = None
     finesse: bool = False  # whether the position-proof / -sensitive split was computed
+    finesse_note: str = "" # why the finesse split was skipped (constrained opponents)
+    auction: "AuctionResult | None" = None  # declarer fixed by an explicit auction, if given
 
     @property
     def empty(self) -> bool:

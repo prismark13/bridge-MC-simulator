@@ -54,6 +54,19 @@ def render_text(result) -> str:
     else:
         L.append(f"  → {'bid the slam' if result.bid_slam else 'stay in game'}")
 
+    a = result.auction
+    if a:
+        L.append(f"\nAUCTION  (dealer {result.config.dealer}: {result.config.auction})")
+        L.append(f"  contract  : {a.contract}{'x' * a.doubled} declared by {a.declarer} ({a.side})")
+        if a.on_our_side:
+            L.append(f"  as played : {a.declarer} {a.dec_rate:4.0f}%   "
+                     f"if {a.partner} declared {a.par_rate:4.0f}%   swing {a.swing:+.0f}")
+            if a.wrong_side:
+                L.append(f"  → WRONG SIDE: {a.contract} stuck in {a.declarer}'s hand, "
+                         f"{abs(a.swing):.0f} pts worse than {a.partner} playing it")
+        else:
+            L.append(f"  → {a.side} own the contract (see OPPONENTS / PAR)")
+
     og, os_ = result.opp_best_game, result.opp_best_slam
     if og and os_:
         vt = " (vulnerable)" if result.vul_them else ""
@@ -94,13 +107,15 @@ def render_text(result) -> str:
             line("by shape", bd.by_short)
 
     if result.finesse:
-        L.append("\nCARD PLACEMENT  (E/W swap)")
+        L.append("\nCARD PLACEMENT  (defenders swapped)")
         seen = set()
         for c in (result.best_game, result.best_slam, result.best_grand):
             if c and c.label not in seen and c.make_rate >= 8:
                 seen.add(c.label)
-                L.append(f"  {c.label:<4} DD {c.make_rate:4.0f}%   position-proof "
+                L.append(f"  {c.label:<4} DD {c.make_rate:4.0f}%   single-dummy floor "
                          f"{c.proof_rate:4.0f}%   hinges on placement {c.sens_rate:4.0f}%")
+    elif result.finesse_note:
+        L.append("\nCARD PLACEMENT  " + result.finesse_note)
 
     if result.samples:
         L.append("\nSAMPLE DEALS")

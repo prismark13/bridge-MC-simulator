@@ -4,6 +4,8 @@
 place that touches the anthropic SDK, yielding text chunks so any front-end can
 adapt the stream to its own event model.
 """
+from ..domain.decision import decide
+
 try:
     import anthropic
     HAVE_ANTHROPIC = True
@@ -12,19 +14,16 @@ except Exception:
 
 MODEL = "claude-opus-4-8"
 SYSTEM = (
-    "You are an expert bridge analyst. You are given the results of a "
-    "double-dummy Monte-Carlo simulation for one deal setup. If the user asks a "
-    "specific question, answer that directly; otherwise give a concise, "
-    "practical verdict: whether to bid on or stop, the safety-net contract, and "
-    "the one or two factors that most drive the outcome. Both sides' makeable "
-    "contracts are given with the board vulnerability, so when relevant judge "
-    "the competitive decision (compete, double, or sacrifice) — a sacrifice is "
-    "good when its expected cost is less than the opponents' making contract. "
-    "When the results include a make-rate breakdown by the constrained hand's "
-    "HCP / trump length / shortness, use it to say WHICH hands should bid on. "
-    "Keep it practical, "
-    "roughly 120-200 words, and use ONLY the numbers provided; do not invent new "
-    "ones. Plain text, no preamble."
+    "You are an expert bridge analyst reading a double-dummy Monte-Carlo "
+    "simulation. The prompt states ONE specific bidding decision and its options. "
+    "Answer THAT decision decisively: recommend one action, give the one or two "
+    "numbers that drive it, and name the safety net. If the user adds a question, "
+    "answer it directly. Both sides' makeable contracts and the board "
+    "vulnerability are given, so for competitive decisions weigh compete / double "
+    "/ sacrifice — a save is good when its cost is less than the opponents' making "
+    "contract. If a make-rate breakdown by the constrained hand is given, say "
+    "WHICH hands should act. Keep it ~120-180 words, use ONLY the numbers "
+    "provided, plain text, no preamble."
 )
 
 
@@ -67,6 +66,7 @@ def build_prompt(result, question: str = "") -> str:
 
     bg = result.best_game
     og = result.opp_best_game
+    d = decide(result)
 
     L = [f"Double-dummy Monte-Carlo, {result.accepted} deals. We are {us}; "
          f"the opponents are {them}.",
@@ -81,12 +81,25 @@ def build_prompt(result, question: str = "") -> str:
         L.append(f"{them} (them) can make: {contracts(result.opp_games, result.opp_slams)}")
         L.append(f"Best makeable: {us} {bg.label} {bg.make_rate:.0f}%; "
                  f"{them} {og.label} {og.make_rate:.0f}%.")
-    if result.bid_grand:
-        gr, bs = result.best_grand, result.best_slam
-        L.append(f"NOTE: the grand slam {gr.label} makes {gr.make_rate:.0f}%, nearly as often "
-                 f"as the small slam {bs.label} ({bs.make_rate:.0f}%), so bidding {gr.label} is "
-                 f"worth {gr.avg_score - bs.avg_score:+.0f} points over stopping in six — "
-                 f"recommend the grand.")
+    a = result.auction
+    if a and a.on_our_side:
+        note = (" — this is the WRONG SIDE: the long suit sits opposite the tenaces, so "
+                "the auction cannot get the opening lead coming up to them" if a.wrong_side
+                else "")
+        L.append(f"Explicit auction fixes {a.declarer} as declarer of {a.contract}: it makes "
+                 f"{a.dec_rate:.0f}% as actually played, versus {a.par_rate:.0f}% if {a.partner} "
+                 f"could declare ({a.swing:+.0f}% swing){note}. Make-rates elsewhere use the "
+                 f"realistic declarer (suit = long-trump hand).")
+    if d:
+        L.append(f"THE DECISION for {us}: {d.question}")
+        L.append(f"  Options: {' | '.join(d.options)}. The simulation favours "
+                 f"{d.recommend} (about {d.margin:+.0f} points/board).")
+        if d.confidence:
+            L.append(f"  Confidence {d.confidence}: {d.solidity:.0f}% of {d.contract}'s "
+                     f"make-rate is position-proof (guaranteed regardless of where the "
+                     f"defenders' cards lie); the rest hinges on card placement.")
+        if d.evidence:
+            L.append("  Drivers: " + "; ".join(f"{k} {v}" for k, v in d.evidence))
     p = result.par
     if p:
         tops = "; ".join(c.replace(",", " or ") for c, _ in p.top)
@@ -124,8 +137,8 @@ def build_prompt(result, question: str = "") -> str:
              f"tricks; the score in parentheses is that side's average points, so a "
              f"positive {them} score is a loss for {us}. Par is from {us}'s view "
              f"('x' = doubled).")
-    q = (question or "").strip()
-    L.append(f"Question: {q}" if q else "Give the bid-or-stop verdict for us.")
+    q = (question or "").strip() or (d.question if d else "")
+    L.append(f"Answer decisively: {q}" if q else "Give the verdict.")
     return "\n".join(L)
 
 

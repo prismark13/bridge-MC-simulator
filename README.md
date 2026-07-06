@@ -61,6 +61,15 @@ hands should accept a slam try and which should sign off.
   deal and shows the pane that fits — slam-vs-game and a *which-hands-bid-on*
   breakdown on constructive deals; on a competitive deal it drops the slam
   content and shows the sides side-by-side instead.
+- **Realistic declarer:** contracts are scored from the hand that would actually
+  play them — a **suit from the long-trump hand**, notrump from the better hand —
+  instead of an optimistic best-of-both. On hands where the long suit sits
+  opposite the tenaces this matters a lot (the lead has to come *up* to the
+  honours), so a slam can be 20–30% worse played from the wrong side.
+- **Auction-aware declarer** (optional): type the **auction** (dealer + calls,
+  e.g. `1D P 1H P 4H P P P`) and the report names the seat the auction installs
+  as declarer, scores the final contract from *that* hand, and flags the
+  **wrong-side cost** when the good contract is stuck in the weak hand.
 - **Card-placement / finesse split** (optional): re-solves each deal with the
   defenders swapped to show how much of a contract is **position-proof** (makes
   however the cards lie) vs **hinging on card placement** (a finesse/endplay you
@@ -150,6 +159,9 @@ count and hit **Run**.
 ```sh
 python -m bridge_mc.cli --fixed S "Q9643 J AT86 KQ4" --con N "16-21:0,5,4,0" -n 20000
 python -m bridge_mc.cli --fixed S "..." --con N "22-24:bal" --html report.html
+# name the declarer via an auction (who plays it changes the make-rate):
+python -m bridge_mc.cli --fixed N "AJ8 2 A9732 AKT5" --fixed S "Q65 AQJT84 KQ 63" \
+    --dealer N --auction "1D P 1H P 3H P 6H P P P"
 ```
 
 **Example scripts:**
