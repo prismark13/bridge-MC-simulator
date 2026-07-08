@@ -24,17 +24,17 @@ from .theming import apply_palette
 from .workers import AiWorker, SimWorker
 
 DEFAULTS = {
-    "N": ("Fixed", "AJ8 2 A9732 AKT5", 0, 37, "any"),
+    "N": ("Constrain", "", 18, 19, "semibal"),
     "E": ("Random", "", 0, 37, "any"),
-    "S": ("Fixed", "Q65 AQJT84 KQ 63", 0, 37, "any"),
+    "S": ("Fixed", "AJ972 K976 AJT 2", 0, 37, "any"),
     "W": ("Random", "", 0, 37, "any"),
 }
 DEFAULT_SIDE = "NS"
 DEFAULT_VUL = "None"
-DEFAULT_DEALS = 2000
+DEFAULT_DEALS = 5000
 DEFAULT_DEALER = "N"
-DEFAULT_AUCTION = "1D P 1H P 3H P 6H P P P"
-DEFAULT_ASK = "which slam is best — 6NT or 6H — and how safe is it?"
+DEFAULT_AUCTION = ""
+DEFAULT_ASK = ""
 MODES = ["Random", "Fixed", "Constrain"]
 
 
