@@ -1,0 +1,6 @@
+# Web front-end deps — no Qt/PySide6 (the browser is the UI).
+fastapi
+uvicorn[standard]
+python-multipart
+anthropic
+redeal @ git+https://github.com/anntzer/redeal

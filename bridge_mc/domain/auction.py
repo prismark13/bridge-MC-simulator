@@ -25,6 +25,8 @@ def parse_bid(call: str):
     if not c or c[0] not in "1234567":
         return None
     strain = c[1:]
+    if strain == "N":            # accept bare 'N' as shorthand for notrump
+        strain = "NT"
     if strain not in STRAINS:
         raise ValueError(f"bad strain in {call!r}")
     return int(c[0]), strain

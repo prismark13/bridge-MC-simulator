@@ -1,0 +1,15 @@
+# Keep the image small and secrets out of it.
+.git
+.github
+__pycache__
+*.pyc
+build/
+dist/
+*.spec
+apikey.txt
+bridge-mc-*.html
+docs/
+examples/
+tests/
+.venv
+venv

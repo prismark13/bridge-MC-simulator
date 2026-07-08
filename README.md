@@ -190,6 +190,44 @@ QtWebEngine ships a Chromium helper process, so the app is built one-folder
 (`.github/workflows/build.yml`) builds and publishes all three platforms when a
 `v*` tag is pushed.
 
+## Run from your phone (web / cloud)
+
+There's a headless **web front-end** (`web/app.py`, FastAPI) that reuses the same
+engine and report with **no Qt** — so you drive it from any phone browser. Same
+hands / options / **auction** / Ask-Claude fields; it returns the identical
+styled report.
+
+**Try it locally** (phone on the same Wi-Fi hits `http://<your-pc-ip>:8080`):
+
+```sh
+python -m pip install -r requirements-web.txt      # fastapi, uvicorn, redeal…
+python -m uvicorn web.app:app --host 0.0.0.0 --port 8080
+```
+
+**Deploy it always-on** (reachable anywhere, no PC needed). A `Dockerfile` +
+`fly.toml` are included; [Fly.io](https://fly.io) is the easy path (any
+Docker host works — Render, Railway, a VPS):
+
+```sh
+# one-time
+fly launch --copy-config --no-deploy        # edit `app` in fly.toml to a unique name
+fly secrets set APP_PASS=pick-a-password     # gates the whole app behind a login
+fly secrets set ANTHROPIC_API_KEY=sk-ant-…   # optional — only for the Explain button
+fly deploy
+```
+
+Then open `https://<your-app>.fly.dev` on your phone and log in. Notes:
+
+- **`APP_PASS` is required in the cloud** — without it the app is open to anyone
+  (and it runs CPU + can spend your Claude credits). With it set, every page is
+  behind HTTP basic auth; `/healthz` stays open for the platform probe.
+- Guards: `MAX_DEALS` caps deals per request and `RUN_TIMEOUT` abandons a run
+  that overruns — both are env vars (defaults 8000 / 120s).
+- By default the machine **scales to zero** when idle (pennies) and wakes in
+  ~2–3s on the next request; set `min_machines_running = 1` in `fly.toml` for
+  zero cold-start.
+- The simulation needs **no API key**; only Explain does.
+
 ## A word on double-dummy numbers
 
 Double-dummy solving assumes **perfect play by everyone with all 52 cards
