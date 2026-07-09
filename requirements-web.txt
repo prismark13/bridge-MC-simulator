@@ -3,4 +3,5 @@ fastapi
 uvicorn[standard]
 python-multipart
 anthropic
-redeal @ git+https://github.com/anntzer/redeal
+redeal @ git+https://github.com/anntzer/redeal   # deal generation (SmartStack)
+endplay                                          # fast prebuilt DDS (solving + par)

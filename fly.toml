@@ -2,14 +2,14 @@
 #   fly launch --copy-config --no-deploy   (creates the app)
 #   fly secrets set APP_PASS=... ANTHROPIC_API_KEY=...   (login + optional Explain)
 #   fly deploy
-app = "bridge-mc-sim"
+app = "bridge-mc-xbk25"
 primary_region = "lhr"          # pick your nearest: iad, ord, ams, syd, ...
 
 [build]
 
 [env]
-  MAX_DEALS = "8000"            # per-request deal cap (guards CPU)
-  RUN_TIMEOUT = "120"           # seconds before a run is abandoned
+  MAX_DEALS = "1500"            # per-request deal cap (guards CPU)
+  RUN_TIMEOUT = "180"           # seconds before a run is abandoned
 
 [http_service]
   internal_port = 8080
@@ -20,15 +20,18 @@ primary_region = "lhr"          # pick your nearest: iad, ord, ams, syd, ...
   auto_start_machines = true
   min_machines_running = 0
 
+# Double-dummy solving is sustained-CPU work — shared cores get throttled hard
+# (and starve the health check). Dedicated "performance" cores are required, and
+# DDS parallelises across the batch so more cores ~= linearly faster.
 [[vm]]
-  cpu_kind = "shared"
-  cpus = 2
-  memory = "1gb"
+  cpu_kind = "performance"
+  cpus = 4
+  memory = "8gb"          # performance CPUs require >= 2gb per core
 
 [checks.health]
   type = "http"
   port = 8080
   path = "/healthz"
   interval = "30s"
-  timeout = "5s"
-  grace_period = "20s"
+  timeout = "10s"
+  grace_period = "40s"

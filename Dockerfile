@@ -10,6 +10,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 COPY requirements-web.txt .
+# redeal (dealing) is compiled from git; endplay (solving) is a fast prebuilt
+# wheel. The solver auto-prefers endplay — see engine/solver.py.
 RUN pip install -r requirements-web.txt
 
 COPY bridge_mc ./bridge_mc

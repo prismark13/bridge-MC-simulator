@@ -224,10 +224,10 @@ FORM_HTML = f"""<!doctype html>
     <div class="opts">
       <label>Us<select name="side"><option>NS</option><option>EW</option></select></label>
       <label>Vul<select name="vul">{_vul_opts()}</select></label>
-      <label>Deals<input type="number" name="deals" value="2000" min="100" max="{MAX_DEALS}" step="500"></label>
+      <label>Deals<input type="number" name="deals" value="500" min="100" max="{MAX_DEALS}" step="250"></label>
       <label>Seed<input name="seed" placeholder="optional"></label>
       <label class="check"><input type="checkbox" name="samples" checked>samples</label>
-      <label class="check"><input type="checkbox" name="finesse" checked>confidence</label>
+      <label class="check"><input type="checkbox" name="finesse">confidence (~2× slower)</label>
       <label class="full">Auction — dealer
         <span class="hcp">
           <select name="dealer" style="width:5rem"><option>N</option><option>E</option><option>S</option><option>W</option></select>

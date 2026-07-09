@@ -127,12 +127,92 @@ class DdsSolver:
         return out
 
 
-_DEFAULT: DdsSolver | None = None
+# --- endplay backend --------------------------------------------------------
+# redeal bundles a slow DDS build (≈6× slower on Linux); endplay ships an
+# optimized prebuilt wheel. Same DDS engine underneath, so trick tables and par
+# are bit-identical — this is purely a faster binary. Used when importable
+# (e.g. the Linux container); otherwise we fall back to redeal's DdsSolver.
+_RMAP = "..23456789TJQKA"     # redeal card .value (2..14) -> PBN rank char
 
 
-def default_solver() -> DdsSolver:
-    """Process-wide default solver (lazily created)."""
+def _pbn_suit(holding) -> str:
+    return "".join(_RMAP[c.value] for c in sorted(holding, key=lambda c: -c.value))
+
+
+def _pbn(hands) -> str:
+    """[N, E, S, W] redeal Hands -> a PBN deal string."""
+    return "N:" + " ".join(
+        ".".join(_pbn_suit(s) for s in (h.spades, h.hearts, h.diamonds, h.clubs))
+        for h in hands)
+
+
+class EndplaySolver:
+    """Drop-in for :class:`DdsSolver` backed by endplay's optimized DDS.
+
+    Same interface (``solve`` / ``solve_full``) and identical results; converts
+    redeal hands to endplay deals via PBN, reuses the DD table for par."""
+
+    def __init__(self):
+        from endplay.dds import calc_all_tables, par
+        from endplay.types import Deal, Denom, Penalty, Player, Vul
+        self._calc, self._parfn, self._Deal = calc_all_tables, par, Deal
+        self._players = (Player.north, Player.east, Player.south, Player.west)
+        self._north = Player.north
+        self._denom = {"C": Denom.clubs, "D": Denom.diamonds, "H": Denom.hearts,
+                       "S": Denom.spades, "N": Denom.nt}
+        self._dch = {Denom.clubs: "C", Denom.diamonds: "D", Denom.hearts: "H",
+                     Denom.spades: "S", Denom.nt: "N"}
+        self._pen = {Penalty.passed: "", Penalty.doubled: "x", Penalty.redoubled: "xx"}
+        self._pl = {Player.north: "N", Player.east: "E",
+                    Player.south: "S", Player.west: "W"}
+        # DDS vul int (0 None, 1 Both, 2 NS, 3 EW) -> endplay Vul.
+        self._vul = {0: Vul.none, 1: Vul.both, 2: Vul.ns, 3: Vul.ew}
+
+    def _tricks(self, tab) -> dict:
+        return {s: tuple(int(tab[self._denom[s], p]) for p in self._players)
+                for s in STRAINS}
+
+    def _side(self, decs) -> str:
+        s = {self._pl[p] for p in decs}
+        if s == {"N", "S"}:
+            return "NS"
+        if s == {"E", "W"}:
+            return "EW"
+        return "".join(sorted(s))
+
+    def _par(self, tab, vul_int: int):
+        pr = self._parfn(tab, self._vul[vul_int], self._north)
+        groups: dict = {}
+        sac = False
+        for c in pr:
+            groups.setdefault((c.level, c.denom, c.penalty), set()).add(c.declarer)
+            if self._pen[c.penalty]:
+                sac = True
+        alts = [f"{self._side(decs)} {lvl}{self._dch[den]}{self._pen[pen]}"
+                for (lvl, den, pen), decs in groups.items()]
+        return {"ns": pr.score, "ew": -pr.score,
+                "contract": ",".join(alts), "sac": sac}
+
+    def solve(self, deals: Sequence) -> list:
+        tabs = self._calc([self._Deal.from_pbn(_pbn(h)) for h in deals])
+        return [self._tricks(t) for t in tabs]
+
+    def solve_full(self, deals: Sequence, par_vul: int | None = None) -> list:
+        tabs = self._calc([self._Deal.from_pbn(_pbn(h)) for h in deals])
+        return [(self._tricks(t), self._par(t, par_vul) if par_vul is not None else None)
+                for t in tabs]
+
+
+_DEFAULT = None
+
+
+def default_solver():
+    """Process-wide default solver (lazily created). Prefers the faster endplay
+    backend when it's importable, else redeal's bundled DDS."""
     global _DEFAULT
     if _DEFAULT is None:
-        _DEFAULT = DdsSolver()
+        try:
+            _DEFAULT = EndplaySolver()
+        except Exception:
+            _DEFAULT = DdsSolver()
     return _DEFAULT
