@@ -220,6 +220,7 @@ class SimResult:
     finesse: bool = False  # whether the position-proof / -sensitive split was computed
     finesse_note: str = "" # why the finesse split was skipped (constrained opponents)
     auction: "AuctionResult | None" = None  # declarer fixed by an explicit auction, if given
+    trick_dist: dict = field(default_factory=dict)  # strain -> {seat -> {tricks: count}}
 
     @property
     def empty(self) -> bool:
@@ -265,3 +266,33 @@ class SimResult:
             if s.label == label:
                 return s
         return None
+
+    def contract_odds(self, label: str, declarer: str | None = None) -> float | None:
+        """Make-rate (%) of *any* contract from the DD trick distribution.
+
+        ``label`` like '3D', '3NT', '4Sx' — a doubled contract takes the same
+        tricks, so a trailing 'x'/'xx' is ignored. ``declarer`` is a seat
+        'N'/'E'/'S'/'W'; None returns the best (highest) declarer for that
+        strain. Returns None if the distribution wasn't recorded (empty result)
+        or the label doesn't parse. Unlocks partscores the standard stats omit.
+        """
+        lab = label.strip().upper().rstrip("X")
+        if len(lab) < 2 or not lab[0].isdigit():
+            return None
+        level, strain = int(lab[0]), lab[1:]
+        if strain == "NT":
+            strain = "N"
+        seats = self.trick_dist.get(strain)
+        if not seats:
+            return None
+        need = level + 6
+        want = [declarer.strip().upper()] if declarer else list(seats)
+        best = None
+        for seat in want:
+            hist = seats.get(seat)
+            tot = sum(hist.values()) if hist else 0
+            if not tot:
+                continue
+            pct = 100 * sum(c for t, c in hist.items() if t >= need) / tot
+            best = pct if best is None else max(best, pct)
+        return best

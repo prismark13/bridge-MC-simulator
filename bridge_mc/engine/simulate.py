@@ -13,8 +13,8 @@ from collections import Counter
 from redeal import Contract
 
 from ..domain.contracts import (
-    ALL_CS, ATTR, GAMES, GRANDS, ORDER, SIDE_IDX, SLAMS, SUIT_SYM, opp_side,
-    side_vul, to_imps)
+    ALL_CS, ATTR, GAMES, GRANDS, ORDER, SIDE_IDX, SLAMS, STRAINS, SUIT_SYM,
+    opp_side, side_vul, to_imps)
 from ..domain.auction import declarer_from_auction
 from ..domain.types import (
     AuctionResult, Breakdown, ContractStat, Par, Sacrifice, SampleDeal,
@@ -244,6 +244,12 @@ def run(config, solver=None, progress=lambda a, t: None, stop=lambda: False):
     # contract, so we can report the reachable make-rate and the wrong-side cost.
     auc = _auction_setup(config)
 
+    # Full trick distribution: per strain, per seat, a histogram of DD tricks.
+    # Lets any contract's make-rate (incl. partscores like 3D by West) be
+    # resolved after the run — the data behind the reactive "Ask Claude".
+    tdist = {s: {"N": Counter(), "E": Counter(), "S": Counter(), "W": Counter()}
+             for s in STRAINS}
+
     samples, pending = [], []
     accepted = candidates = tries = 0
 
@@ -266,6 +272,11 @@ def run(config, solver=None, progress=lambda a, t: None, stop=lambda: False):
             di_us = us.dec_idx(deal)
             st_us = us.add(tv, di_us)
             them_st = them.add(tv, them.dec_idx(deal))
+            for s in STRAINS:
+                col = tv[s]
+                row = tdist[s]
+                row["N"][col[0]] += 1; row["E"][col[1]] += 1
+                row["S"][col[2]] += 1; row["W"][col[3]] += 1
             if auc is not None:
                 col = tv[auc["dds"]]
                 auc["dec_makes"] += col[auc["dec_i"]] >= auc["need"]
@@ -381,4 +392,6 @@ def run(config, solver=None, progress=lambda a, t: None, stop=lambda: False):
         opp_games=T["games"], opp_slams=T["slams"],
         opp_best_game=T["best_game"], opp_best_slam=T["best_slam"],
         par=par, zone=zone, sacrifice=sacrifice, finesse=finesse_ok,
-        finesse_note=finesse_note, auction=auction)
+        finesse_note=finesse_note, auction=auction,
+        trick_dist={s: {k: dict(v) for k, v in seats.items()}
+                    for s, seats in tdist.items()})
