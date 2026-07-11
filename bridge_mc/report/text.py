@@ -22,37 +22,41 @@ def render_text(result) -> str:
         L.append(f"  {stat.label:<8}{stat.make_rate:5.1f}% ±{stat.ci95:3.1f}  "
                  f"{av}  {'▉' * round(stat.make_rate / 5)}")
 
+    bg, bs, gr = result.best_game, result.best_slam, result.best_grand
+    # Only a constructive (slam/game) deal wants the slam/grand tables; a
+    # competitive one (we can't make game) is about defending/competing.
+    competitive = result.zone == "competitive"
+
     L.append("GAMES")
     for s in result.games:
         row(s)
     row(result.any_game)
-    L.append("SLAMS")
-    for s in result.slams:
-        row(s)
-    row(result.any_slam)
-    L.append("GRANDS")
-    for s in result.grands:
-        row(s)
-    row(result.grand)
+    if not competitive:
+        L.append("SLAMS")
+        for s in result.slams:
+            row(s)
+        row(result.any_slam)
+        L.append("GRANDS")
+        for s in result.grands:
+            row(s)
+        row(result.grand)
 
-    bg, bs, gr = result.best_game, result.best_slam, result.best_grand
-    og = result.opp_best_game
-    competitive = og is not None and max(bg.make_rate, bs.make_rate) < 50 \
-        and og.make_rate >= 50
     L.append("\nBIDDING DECISION")
     L.append(f"  best game : {bg.label:<4} {bg.make_rate:4.0f}%  EV {bg.avg_score:+.0f}")
-    L.append(f"  best slam : {bs.label:<4} {bs.make_rate:4.0f}%  EV {bs.avg_score:+.0f}")
-    L.append(f"  best grand: {gr.label:<4} {gr.make_rate:4.0f}%  EV {gr.avg_score:+.0f}")
-    imp = f",  {result.imp:+.2f} IMP/board" if result.imp is not None else ""
-    L.append(f"  slam vs game: {result.ev_diff:+.0f} pts{imp}")
     if competitive:
-        L.append(f"  → competitive deal: {result.opp_side} own it "
-                 f"({og.label} {og.make_rate:.0f}%) — compete / sacrifice / defend (see PAR)")
-    elif result.bid_grand:
-        L.append(f"  → BID THE GRAND {gr.label} "
-                 f"(+{gr.avg_score - bs.avg_score:.0f} pts vs the small slam {bs.label})")
+        L.append(f"  → competitive deal — you can't make game reliably "
+                 f"({bg.label} {bg.make_rate:.0f}%). This is a defend / compete decision, "
+                 f"not a constructive one (see AUCTION, PAR, COMPETE).")
     else:
-        L.append(f"  → {'bid the slam' if result.bid_slam else 'stay in game'}")
+        L.append(f"  best slam : {bs.label:<4} {bs.make_rate:4.0f}%  EV {bs.avg_score:+.0f}")
+        L.append(f"  best grand: {gr.label:<4} {gr.make_rate:4.0f}%  EV {gr.avg_score:+.0f}")
+        imp = f",  {result.imp:+.2f} IMP/board" if result.imp is not None else ""
+        L.append(f"  slam vs game: {result.ev_diff:+.0f} pts{imp}")
+        if result.bid_grand:
+            L.append(f"  → BID THE GRAND {gr.label} "
+                     f"(+{gr.avg_score - bs.avg_score:.0f} pts vs the small slam {bs.label})")
+        else:
+            L.append(f"  → {'bid the slam' if result.bid_slam else 'stay in game'}")
 
     a = result.auction
     if a:
@@ -65,7 +69,8 @@ def render_text(result) -> str:
                 L.append(f"  → WRONG SIDE: {a.contract} stuck in {a.declarer}'s hand, "
                          f"{abs(a.swing):.0f} pts worse than {a.partner} playing it")
         else:
-            L.append(f"  → {a.side} own the contract (see OPPONENTS / PAR)")
+            L.append(f"  makes    : {a.declarer} makes {a.contract}{'x' * a.doubled} "
+                     f"{a.dec_rate:4.0f}%   you beat it {100 - a.dec_rate:.0f}%")
 
     og, os_ = result.opp_best_game, result.opp_best_slam
     if og and os_:
@@ -106,7 +111,7 @@ def render_text(result) -> str:
         if bd.by_short:
             line("by shape", bd.by_short)
 
-    if result.finesse:
+    if result.finesse and not competitive:
         L.append("\nCARD PLACEMENT  (defenders swapped)")
         seen = set()
         for c in (result.best_game, result.best_slam, result.best_grand):
@@ -114,7 +119,7 @@ def render_text(result) -> str:
                 seen.add(c.label)
                 L.append(f"  {c.label:<4} DD {c.make_rate:4.0f}%   single-dummy floor "
                          f"{c.proof_rate:4.0f}%   hinges on placement {c.sens_rate:4.0f}%")
-    elif result.finesse_note:
+    elif result.finesse_note and not competitive:
         L.append("\nCARD PLACEMENT  " + result.finesse_note)
 
     if result.samples:

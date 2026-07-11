@@ -331,13 +331,23 @@ def _auction_html(r):
     lead = (f'<p class="sec-lead">Dealer {r.config.dealer}. '
             f'<span class="mono">{_auction_calls(r.config.auction)}</span></p>')
     if not a.on_our_side:
+        beat = 100 - a.dec_rate
         return f"""
   <section>
-    <p class="kicker">The auction · who declares</p>
-    <h2>This auction lands in {con}{dbl} — {a.side}'s contract</h2>
+    <p class="kicker">The auction · their contract</p>
+    <h2>{con}{dbl} by {a.declarer} makes {a.dec_rate:.0f}%</h2>
     {lead}
-    <p class="sec-lead">Played by <b>{a.declarer}</b> — the opponents' hand. See the
-       competitive picture below for what it's worth to you.</p>
+    <p class="sec-lead">{a.side} play <b>{con}{dbl}</b> ({a.declarer}). Here is how
+       often it comes home against your two hands, over random layouts for the other
+       defender.</p>
+    <div class="two-col">
+      <div class="cside"><p class="k">{a.side} make {con}{dbl}</p>
+        <span class="pv" style="color:var(--warn)">{a.dec_rate:.0f}%</span>
+        <span class="se">their contract comes home</span></div>
+      <div class="cside"><p class="k">You beat it</p>
+        <span class="pv" style="color:var(--good)">{beat:.0f}%</span>
+        <span class="se">set {con} at least one trick</span></div>
+    </div>
   </section>"""
     tone = "var(--warn)" if a.wrong_side else "var(--good)"
     if a.wrong_side:
