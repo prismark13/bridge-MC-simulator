@@ -255,6 +255,16 @@ class SimResult:
         return self.ev_diff > 0
 
     @property
+    def we_own(self) -> bool:
+        """Competitive deal where WE hold the values and the opponents sacrificed:
+        par is strongly in our favour and they have no makeable game. The
+        compete/sacrifice framing (as if we were defending their game) doesn't
+        apply, so renderers drop it."""
+        return (self.zone == "competitive" and self.par is not None
+                and self.par.avg_us >= 150
+                and (self.opp_best_game is None or self.opp_best_game.make_rate < 40))
+
+    @property
     def bid_grand(self) -> bool:
         """The grand is the highest-EV contract — worth more than the small slam."""
         g, s, gm = self.best_grand, self.best_slam, self.best_game

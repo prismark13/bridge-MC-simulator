@@ -484,7 +484,7 @@ def render_html(result, theme: str = "light") -> str:
 
   {_competitive_html(result)}
 
-  {_sacrifice_html(result) if competitive else ""}
+  {_sacrifice_html(result) if (competitive and not result.we_own) else ""}
 
   {_finesse_html(result)}
 

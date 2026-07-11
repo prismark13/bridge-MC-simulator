@@ -43,7 +43,10 @@ def render_text(result) -> str:
 
     L.append("\nBIDDING DECISION")
     L.append(f"  best game : {bg.label:<4} {bg.make_rate:4.0f}%  EV {bg.avg_score:+.0f}")
-    if competitive:
+    if competitive and result.we_own:
+        L.append(f"  → you own the hand (par {result.par.avg_us:+.0f}); the opponents can't "
+                 f"make a game and have sacrificed. It's a defend / double decision — see AUCTION.")
+    elif competitive:
         L.append(f"  → competitive deal — you can't make game reliably "
                  f"({bg.label} {bg.make_rate:.0f}%). This is a defend / compete decision, "
                  f"not a constructive one (see AUCTION, PAR, COMPETE).")
@@ -73,7 +76,7 @@ def render_text(result) -> str:
                      f"{a.dec_rate:4.0f}%   you beat it {100 - a.dec_rate:.0f}%")
 
     og, os_ = result.opp_best_game, result.opp_best_slam
-    if og and os_:
+    if og and os_ and not result.we_own:
         vt = " (vulnerable)" if result.vul_them else ""
         L.append(f"\nOPPONENTS  {result.opp_side}{vt}")
         L.append(f"  best game : {og.label:<4} {og.make_rate:4.0f}%  EV {og.avg_score:+.0f}")
@@ -89,7 +92,7 @@ def render_text(result) -> str:
                      ", ".join(f"{c} ({n})" for c, n in p.top))
 
     s = result.sacrifice
-    if s and s.save_bid and result.zone == "competitive":
+    if s and s.save_bid and result.zone == "competitive" and not result.we_own:
         from ..domain.contracts import is_game
         head = "SACRIFICE" if is_game(s.opp_game) else "COMPETE"
         L.append(f"\n{head}  ({result.side}: bid {s.save_bid} vs pass over {s.opp_game})")
