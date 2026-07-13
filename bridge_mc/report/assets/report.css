@@ -19,6 +19,15 @@ body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
 .pip{color:var(--pip)} .blk{color:var(--ink-2)}
 .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
 
+.answer{border:1px solid var(--line-2);border-left:3px solid var(--good);
+  background:var(--surface);border-radius:10px;padding:16px 20px;margin-bottom:30px}
+.answer .kicker{margin-bottom:8px}
+.answer .aq{font-family:var(--serif);font-weight:500;letter-spacing:-.01em;
+  font-size:clamp(18px,2.6vw,23px);line-height:1.2;color:var(--ink);margin:0 0 12px;text-wrap:balance}
+.answer .aa{font-size:15.5px;line-height:1.6;color:var(--ink-2);white-space:pre-wrap}
+.answer .aa .pip{color:var(--pip)}
+.answer .aa.pending{color:var(--muted);font-style:italic}
+
 .hero{border-top:2px solid var(--ink);padding-top:22px}
 .eyebrow{font-family:var(--mono);text-transform:uppercase;letter-spacing:.22em;
   font-size:11px;color:var(--muted);margin:0 0 16px}

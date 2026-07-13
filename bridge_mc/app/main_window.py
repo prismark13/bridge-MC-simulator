@@ -24,17 +24,17 @@ from .theming import apply_palette
 from .workers import AiWorker, SimWorker
 
 DEFAULTS = {
-    "N": ("Constrain", "", 18, 19, "semibal"),
+    "N": ("Fixed", "K54 QT52 A92 543", 0, 37, "any"),
     "E": ("Random", "", 0, 37, "any"),
-    "S": ("Fixed", "AJ972 K976 AJT 2", 0, 37, "any"),
+    "S": ("Fixed", "QJ93 K83 7 AKQT6", 0, 37, "any"),
     "W": ("Random", "", 0, 37, "any"),
 }
 DEFAULT_SIDE = "NS"
 DEFAULT_VUL = "None"
-DEFAULT_DEALS = 5000
+DEFAULT_DEALS = 2000
 DEFAULT_DEALER = "N"
-DEFAULT_AUCTION = ""
-DEFAULT_ASK = ""
+DEFAULT_AUCTION = "P P 1C 1D 1H 3D X P P P"
+DEFAULT_ASK = "what are the odds of 3Dx making?"
 MODES = ["Random", "Fixed", "Constrain"]
 
 
@@ -49,6 +49,8 @@ class MainWindow(QMainWindow):
         self.ai = None
         self.last_result = None
         self.last_html = None
+        self._answer = ""
+        self._question = ""
         self.mode, self.hand, self.hlo, self.hhi, self.shp = {}, {}, {}, {}, {}
         self.hon = {}
         self._build()
@@ -127,7 +129,7 @@ class MainWindow(QMainWindow):
         o.addSpacing(10); o.addWidget(QLabel("Seed"))
         self.seed = QLineEdit(); self.seed.setMaximumWidth(70); o.addWidget(self.seed)
         o.addSpacing(10)
-        self.samples_cb = QCheckBox("samples"); self.samples_cb.setChecked(True)
+        self.samples_cb = QCheckBox("samples"); self.samples_cb.setChecked(False)
         o.addWidget(self.samples_cb)
         self.auto_cb = QCheckBox("🧠 auto")
         self.auto_cb.setToolTip("Ask Claude automatically when a run finishes")
@@ -246,7 +248,7 @@ class MainWindow(QMainWindow):
         self.dealer.setCurrentText(DEFAULT_DEALER)
         self.auction.setText(DEFAULT_AUCTION)
         self.seed.clear()
-        self.samples_cb.setChecked(True)
+        self.samples_cb.setChecked(False)
         self.auto_cb.setChecked(False)
         self.finesse_cb.setChecked(True)
         self.ask.setText(DEFAULT_ASK)
@@ -340,9 +342,16 @@ class MainWindow(QMainWindow):
     def _on_abort(self):
         self._append_log("\nStopped."); self._finish()
 
+    def _have_ai(self):
+        return bool(HAVE_ANTHROPIC and os.environ.get("ANTHROPIC_API_KEY"))
+
     def _on_done(self, result):
         self.last_result = result if not result.empty else None
         self._set_log(render_text(result))
+        q = self.ask.text().strip()
+        # A typed question is answered on top of the report automatically.
+        self._question = q if (q and self.last_result and self._have_ai()) else ""
+        self._answer = ""
         if result.empty:
             self.report.setHtml(render_html(result, self.theme))
         else:
@@ -355,16 +364,39 @@ class MainWindow(QMainWindow):
             self.prog.setText("done.")
             self.browser_btn.setEnabled(self.last_html is not None)
             self.save_btn.setEnabled(self.last_result is not None)
-            if (self.last_result and HAVE_ANTHROPIC
-                    and os.environ.get("ANTHROPIC_API_KEY")):
+            if self.last_result and self._have_ai():
                 self.explain_btn.setEnabled(True)
-                if self.auto_cb.isChecked():
+                if self._question:            # answer the typed question, on top
+                    self._answer_on_top()
+                elif self.auto_cb.isChecked():
                     self._explain()
 
     def _render(self):
-        self.last_html = render_html(self.last_result, self.theme)
+        self.last_html = render_html(self.last_result, self.theme,
+                                     answer=self._answer or None,
+                                     question=self._question or None)
         self.report.setHtml(self.last_html)
         self.tabs.setCurrentWidget(self.report)
+
+    # -------------------------------------------------- answer on top
+    def _answer_on_top(self):
+        self.explain_btn.setEnabled(False)
+        self.prog.setText("asking Claude…")
+        self._answer = ""
+        self._render()                        # shows the "Asking Claude…" banner
+        self.ai = AiWorker(build_prompt(self.last_result, self._question))
+        self.ai.chunk.connect(self._answer_chunk)
+        self.ai.finished_ok.connect(self._answer_done)
+        self.ai.failed.connect(self._ai_fail)
+        self.ai.start()
+
+    def _answer_chunk(self, s):
+        self._answer += s
+
+    def _answer_done(self):
+        self._render()                        # re-render with the full answer on top
+        self.prog.setText("done.")
+        self.explain_btn.setEnabled(True)
 
     # ---------------------------------------------------------------- log
     def _set_log(self, s):
@@ -409,13 +441,17 @@ class MainWindow(QMainWindow):
     def _explain(self):
         if not self.last_result:
             return
+        q = self.ask.text().strip()
+        if q:                              # a question -> answer on top of the report
+            self._question = q
+            self._answer_on_top()
+            return
+        # blank -> stream the standard verdict into the Log
         self.explain_btn.setEnabled(False)
         self.prog.setText("asking Claude…")
         self.tabs.setCurrentWidget(self.log)
-        question = self.ask.text().strip()
-        header = f"── AI: {question} ──" if question else "── AI verdict ──"
-        self._append_log(f"\n\n{header}\n")
-        self.ai = AiWorker(build_prompt(self.last_result, question))
+        self._append_log("\n\n── AI verdict ──\n")
+        self.ai = AiWorker(build_prompt(self.last_result, ""))
         self.ai.chunk.connect(self._append_log)
         self.ai.finished_ok.connect(lambda: (self.prog.setText("AI verdict done."),
                                              self.explain_btn.setEnabled(True)))
@@ -423,8 +459,12 @@ class MainWindow(QMainWindow):
         self.ai.start()
 
     def _ai_fail(self, msg):
-        self._append_log(f"\n[AI error: {msg}]\n")
         self.prog.setText("AI error."); self.explain_btn.setEnabled(True)
+        if self._question:
+            self._answer = f"(couldn't reach Claude: {msg})"
+            self._render()
+        else:
+            self._append_log(f"\n[AI error: {msg}]\n")
 
 
 def main():

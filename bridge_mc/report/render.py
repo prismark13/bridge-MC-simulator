@@ -378,7 +378,24 @@ def _auction_html(r):
   </section>"""
 
 
-def render_html(result, theme: str = "light") -> str:
+def _esc(t):
+    return t.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _answer_html(question, answer):
+    """A prominent banner at the top of the report: the user's question and
+    Claude's answer (or a pending state while it streams)."""
+    if not question:
+        return ""
+    if answer:
+        body = f'<div class="aa">{_labify(_esc(answer))}</div>'
+    else:
+        body = '<div class="aa pending">Asking Claude&hellip;</div>'
+    return (f'<section class="answer"><p class="kicker">\U0001F9E0 Your question</p>'
+            f'<p class="aq">{_esc(question)}</p>{body}</section>')
+
+
+def render_html(result, theme: str = "light", answer=None, question=None) -> str:
     specs = result.config.specs if result.config else {}
     head = (f'<!doctype html><html data-theme="{theme}"><head><meta charset="utf-8">'
             f'<title>Bridge MC report</title><style>{_css()}</style></head><body>'
@@ -444,6 +461,7 @@ def render_html(result, theme: str = "light") -> str:
                    f'<div class="egs">{egs}</div></section>')
 
     return head + f"""
+  {_answer_html(question, answer)}
   <header class="hero">
     <p class="eyebrow">Double-dummy Monte Carlo · {n:,} deals</p>
     <h1>{h1}</h1>
