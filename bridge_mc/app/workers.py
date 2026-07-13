@@ -31,6 +31,31 @@ class SimWorker(QThread):
             self.failed.emit(repr(e))
 
 
+class SuitWorker(QThread):
+    """Solve one or more suit combinations off the UI thread (the optimal solver
+    can take a few seconds on two-honour holdings)."""
+    done = Signal(list)               # list[(title, result_dict, is_optimal)]
+
+    def __init__(self, items):        # items: list[(title, top, bot)]
+        super().__init__()
+        self.items = items
+
+    def run(self):
+        from ..domain.suitplay_opt import suit_optimal
+        from ..domain.suitplay import suit_real
+        out = []
+        for title, top, bot in self.items:
+            try:
+                r = suit_optimal(top, bot, max_missing=4)
+                if r.get("feasible"):
+                    out.append((title, r, True))
+                else:
+                    out.append((title, suit_real(top, bot), False))
+            except Exception as e:    # noqa: BLE001
+                out.append((title, {"error": str(e)}, False))
+        self.done.emit(out)
+
+
 class AiWorker(QThread):
     chunk = Signal(str)
     finished_ok = Signal()

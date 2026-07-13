@@ -21,7 +21,7 @@ from ..engine.sampling import smart_seat
 from ..report import render_html, render_text
 from .card_picker import CardPicker
 from .theming import apply_palette
-from .workers import AiWorker, SimWorker
+from .workers import AiWorker, SimWorker, SuitWorker
 
 DEFAULTS = {
     "N": ("Constrain", "", 6, 10, "3 0 0 0"),
@@ -529,17 +529,42 @@ class MainWindow(QMainWindow):
                        f"{row('perfect-guess ceiling', r['ceiling'])}"
                        f"</table>")
 
+    def _suit_html_opt(self, title, r):
+        mt = r["max_tricks"]
+        cols = [k for k in range(mt, max(mt - 3, 0), -1)]
+        hdr = "".join(f"<td style='text-align:right;color:#888;font-size:11px;padding-left:20px'>"
+                      f"{k} trick{'s' if k != 1 else ''}</td>" for k in cols)
+        cells = "".join(f"<td style='text-align:right;padding:2px 0 2px 20px;font-weight:600'>"
+                        f"{r['cum'].get(k, 0):.0f}%</td>" for k in cols)
+        return (f"<h3 style='margin:16px 0 1px'>{title}</h3>"
+                f"<div style='color:#888;font-size:12px;margin-bottom:6px'>"
+                f"{r['top'] or '—'} opposite {r['bottom'] or '—'} · defenders hold {r['missing']} · "
+                f"<b>optimal play — real odds</b> (best line vs best defence)</div>"
+                f"<table cellspacing='0'><tr><td></td>{hdr}</tr>"
+                f"<tr><td style='padding-right:6px'>chance of at least</td>{cells}</tr></table>")
+
     def _analyse_suit(self):
         top, bot = self.suit_top.text().strip(), self.suit_bot.text().strip()
-        if not (top or bot):
-            return
-        from bridge_mc.domain.suitplay import suit_real
-        try:
-            r = suit_real(top, bot)
-        except Exception as e:                          # noqa: BLE001
-            self.suit_view.setHtml(f"<p style='color:#b00'>Couldn't parse that: {e}</p>")
-            return
-        self.suit_view.setHtml(self._suit_html("Best play", r))
+        if top or bot:
+            self._start_suits([("Best play", top, bot)])
+
+    def _start_suits(self, items):
+        self.suit_view.setHtml("<p style='color:#888'>Solving optimal play… "
+                               "(a few seconds on two-honour suits)</p>")
+        self.suit_worker = SuitWorker(items)
+        self.suit_worker.done.connect(self._render_suits)
+        self.suit_worker.start()
+
+    def _render_suits(self, results):
+        html = ""
+        for title, r, is_opt in results:
+            if "error" in r:
+                html += f"<p style='color:#b00'>{title}: {r['error']}</p>"
+            elif is_opt:
+                html += self._suit_html_opt(title, r)
+            else:
+                html += self._suit_html(title, r)
+        self.suit_view.setHtml(html or "<p style='color:#888'>Nothing to analyse.</p>")
 
     def _side_suits(self, result):
         if not result or not result.config:
@@ -558,20 +583,13 @@ class MainWindow(QMainWindow):
             self.suit_view.setHtml("<p style='color:#888'>Set both of your hands to "
                                    "<b>Fixed</b> and Run first, then this breaks down each suit.</p>")
             return
-        from bridge_mc.domain.suitplay import suit_real
-        self.suit_view.setHtml("<p style='color:#888'>Solving each suit…</p>")
-        QApplication.processEvents()
-        html = ""
-        for sym, top, bot in combos:
-            if len(top) + len(bot) < 5:                 # short suits: not a play problem
-                continue
-            try:
-                r = suit_real(top, bot)
-            except Exception:                           # noqa: BLE001
-                continue
-            html += self._suit_html(f"{sym}  {top or '—'} / {bot or '—'}", r)
-        self.suit_view.setHtml(html or "<p style='color:#888'>No long suits to analyse "
-                               "(short suits are skipped).</p>")
+        items = [(f"{sym}  {top or '—'} / {bot or '—'}", top, bot)
+                 for sym, top, bot in combos if len(top) + len(bot) >= 5]
+        if not items:
+            self.suit_view.setHtml("<p style='color:#888'>No long suits to analyse "
+                                   "(short suits are skipped).</p>")
+            return
+        self._start_suits(items)
 
     # -------------------------------------------------- answer on top
     def _answer_on_top(self):
