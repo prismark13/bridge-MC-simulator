@@ -497,25 +497,40 @@ class MainWindow(QMainWindow):
 
     # -------------------------------------------------- suit play
     def _suit_html(self, title, r):
-        rows = ""
-        for k in sorted(r["dist"], reverse=True):
-            rows += (f"<tr><td style='padding:2px 16px 2px 0'>{k} tricks</td>"
-                     f"<td style='padding:2px 16px 2px 0;text-align:right'>{r['dist'][k]:.0f}%</td>"
-                     f"<td style='text-align:right;color:#888'>{r['cum'][k]:.0f}%</td></tr>")
-        return (f"<h3 style='margin:16px 0 1px'>{title}</h3>"
-                f"<div style='color:#888;font-size:12px;margin-bottom:5px'>"
-                f"{r['top'] or '—'} opposite {r['bottom'] or '—'} · defenders hold {r['missing']}</div>"
-                f"<table cellspacing='0'><tr style='color:#888;font-size:11px'>"
-                f"<td>make</td><td style='text-align:right'>exactly</td>"
-                f"<td style='text-align:right'>at least</td></tr>{rows}</table>")
+        mt = r["max_tricks"]
+        cols = [k for k in range(mt, max(mt - 3, 0), -1)]
+
+        def row(label, cum, strong=False):
+            w = "font-weight:600;" if strong else ""
+            cells = "".join(f"<td style='text-align:right;padding:2px 0 2px 18px;{w}'>"
+                            f"{cum.get(k, 0):.0f}%</td>" for k in cols)
+            return f"<tr><td style='padding:2px 0;{w}'>{label}</td>{cells}</tr>"
+
+        hdr = "".join(f"<td style='text-align:right;color:#888;font-size:11px;padding-left:18px'>"
+                      f"{k} trick{'s' if k != 1 else ''}</td>" for k in cols)
+        head = (f"<h3 style='margin:16px 0 1px'>{title}</h3>"
+                f"<div style='color:#888;font-size:12px;margin-bottom:6px'>"
+                f"{r['top'] or '—'} opposite {r['bottom'] or '—'} · defenders hold {r['missing']} "
+                f"· chance of <b>at least</b> N tricks, real odds vs best defence</div>")
+        if r["no_guess"]:
+            return head + (f"<table cellspacing='0'><tr><td></td>{hdr}</tr>"
+                           f"{row('cash it — no guess', r['lines']['drop']['cum'], True)}</table>")
+        rec = r["best"]
+        dl = "play for the drop" + ("  ✓" if rec == "drop" else "")
+        fl = "take the finesse" + ("  ✓" if rec == "finesse" else "")
+        return head + (f"<table cellspacing='0'><tr><td></td>{hdr}</tr>"
+                       f"{row(dl, r['lines']['drop']['cum'], rec == 'drop')}"
+                       f"{row(fl, r['lines']['finesse']['cum'], rec == 'finesse')}"
+                       f"{row('perfect-guess ceiling', r['ceiling'])}"
+                       f"</table>")
 
     def _analyse_suit(self):
         top, bot = self.suit_top.text().strip(), self.suit_bot.text().strip()
         if not (top or bot):
             return
-        from bridge_mc.domain.suitplay import suit_odds
+        from bridge_mc.domain.suitplay import suit_real
         try:
-            r = suit_odds(top, bot)
+            r = suit_real(top, bot)
         except Exception as e:                          # noqa: BLE001
             self.suit_view.setHtml(f"<p style='color:#b00'>Couldn't parse that: {e}</p>")
             return
@@ -538,7 +553,7 @@ class MainWindow(QMainWindow):
             self.suit_view.setHtml("<p style='color:#888'>Set both of your hands to "
                                    "<b>Fixed</b> and Run first, then this breaks down each suit.</p>")
             return
-        from bridge_mc.domain.suitplay import suit_odds
+        from bridge_mc.domain.suitplay import suit_real
         self.suit_view.setHtml("<p style='color:#888'>Solving each suit…</p>")
         QApplication.processEvents()
         html = ""
@@ -546,7 +561,7 @@ class MainWindow(QMainWindow):
             if len(top) + len(bot) < 5:                 # short suits: not a play problem
                 continue
             try:
-                r = suit_odds(top, bot)
+                r = suit_real(top, bot)
             except Exception:                           # noqa: BLE001
                 continue
             html += self._suit_html(f"{sym}  {top or '—'} / {bot or '—'}", r)
