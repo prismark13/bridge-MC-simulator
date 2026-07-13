@@ -24,17 +24,17 @@ from .theming import apply_palette
 from .workers import AiWorker, SimWorker
 
 DEFAULTS = {
-    "N": ("Fixed", "K54 QT52 A92 543", 0, 37, "any"),
+    "N": ("Constrain", "", 6, 10, "3 0 0 0"),
     "E": ("Random", "", 0, 37, "any"),
-    "S": ("Fixed", "QJ93 K83 7 AKQT6", 0, 37, "any"),
+    "S": ("Fixed", "AKQ76 AK5 A42 32", 0, 37, "any"),
     "W": ("Random", "", 0, 37, "any"),
 }
 DEFAULT_SIDE = "NS"
 DEFAULT_VUL = "None"
 DEFAULT_DEALS = 2000
 DEFAULT_DEALER = "N"
-DEFAULT_AUCTION = "P P 1C 1D 1H 3D X P P P"
-DEFAULT_ASK = "what are the odds of 3Dx making?"
+DEFAULT_AUCTION = ""
+DEFAULT_ASK = ""
 MODES = ["Random", "Fixed", "Constrain"]
 # Report sections shown by default (the rest are one click away).
 REPORT_DEFAULT = {"tiles", "auction", "hands", "competitive"}
@@ -138,7 +138,7 @@ class MainWindow(QMainWindow):
         self.auto_cb.setToolTip("Ask Claude automatically when a run finishes")
         o.addWidget(self.auto_cb)
         self.finesse_cb = QCheckBox("confidence")
-        self.finesse_cb.setChecked(True)
+        self.finesse_cb.setChecked(False)
         self.finesse_cb.setToolTip("Card-placement / finesse confidence (re-solves with the "
                                    "defenders swapped) — ~2x slower; uncheck for speed")
         o.addWidget(self.finesse_cb)
@@ -251,10 +251,11 @@ class MainWindow(QMainWindow):
         srow.addStretch(1)
         sv.addLayout(srow)
         self.suit_view = QTextBrowser()
-        self.suit_view.setHtml("<p style='color:#888'>Type a suit combination above (e.g. "
-                               "<b>AKxxx</b> opposite <b>Qxxx</b>) and Analyse — or "
-                               "<b>From my hands</b> after a run to break down each of your suits. "
-                               "x = a low spot.</p>")
+        self._suit_placeholder = (
+            "<p style='color:#888'>Type a suit combination above (e.g. "
+            "<b>AKxxx</b> opposite <b>Qxxx</b>) and Analyse — or <b>From my hands</b> "
+            "after a run to break down each of your suits. x = a low spot.</p>")
+        self.suit_view.setHtml(self._suit_placeholder)
         sv.addWidget(self.suit_view, 1)
         self.tabs.addTab(suit_tab, "Suit play")
 
@@ -308,7 +309,7 @@ class MainWindow(QMainWindow):
         self.seed.clear()
         self.samples_cb.setChecked(False)
         self.auto_cb.setChecked(False)
-        self.finesse_cb.setChecked(True)
+        self.finesse_cb.setChecked(False)
         self.ask.setText(DEFAULT_ASK)
         self.last_result = None
         self.last_html = None
@@ -320,8 +321,12 @@ class MainWindow(QMainWindow):
             cb.setChecked(key in REPORT_DEFAULT)
         for b in (self.save_btn, self.browser_btn, self.explain_btn):
             b.setEnabled(False)
+        # Suit-play tab back to its blank state, view back to the report.
+        self.suit_top.clear(); self.suit_bot.clear()
+        self.suit_view.setHtml(self._suit_placeholder)
         self.report.setHtml(self._placeholder("Run a simulation to see the report."))
         self._set_log("")
+        self.tabs.setCurrentWidget(self.report)
         self.prog.setText("reset.")
 
     def _cards_of(self, text):
