@@ -12,7 +12,7 @@ from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QFileDialog, QFrame, QGridLayout,
     QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QPlainTextEdit,
-    QPushButton, QSpinBox, QTabWidget, QVBoxLayout, QWidget)
+    QPushButton, QSpinBox, QTabWidget, QTextBrowser, QVBoxLayout, QWidget)
 
 from ..ai import HAVE_ANTHROPIC, build_prompt
 from ..domain import (
@@ -233,6 +233,31 @@ class MainWindow(QMainWindow):
         self.log.setFrameShape(QFrame.NoFrame)
         self.log.setStyleSheet("font-family:Consolas,monospace;font-size:12px;")
         self.tabs.addTab(self.log, "Log")
+
+        # Suit play — a suit-combination calculator ("best way to play a suit").
+        suit_tab = QWidget(); sv = QVBoxLayout(suit_tab)
+        srow = QHBoxLayout()
+        srow.addWidget(QLabel("Suit"))
+        self.suit_top = QLineEdit(); self.suit_top.setPlaceholderText("AKxxx")
+        self.suit_top.setMaximumWidth(150); self.suit_top.returnPressed.connect(self._analyse_suit)
+        srow.addWidget(self.suit_top)
+        srow.addWidget(QLabel("opposite"))
+        self.suit_bot = QLineEdit(); self.suit_bot.setPlaceholderText("Qxxx")
+        self.suit_bot.setMaximumWidth(150); self.suit_bot.returnPressed.connect(self._analyse_suit)
+        srow.addWidget(self.suit_bot)
+        ab = QPushButton("Analyse"); ab.clicked.connect(self._analyse_suit); srow.addWidget(ab)
+        mb = QPushButton("From my hands"); mb.clicked.connect(self._suits_from_hands)
+        srow.addWidget(mb)
+        srow.addStretch(1)
+        sv.addLayout(srow)
+        self.suit_view = QTextBrowser()
+        self.suit_view.setHtml("<p style='color:#888'>Type a suit combination above (e.g. "
+                               "<b>AKxxx</b> opposite <b>Qxxx</b>) and Analyse — or "
+                               "<b>From my hands</b> after a run to break down each of your suits. "
+                               "x = a low spot.</p>")
+        sv.addWidget(self.suit_view, 1)
+        self.tabs.addTab(suit_tab, "Suit play")
+
         root.addWidget(self.tabs, 1)
 
         for seat in ORDER:
@@ -469,6 +494,64 @@ class MainWindow(QMainWindow):
         if self.last_result and self._have_ai():
             self._question = q
             self._answer_on_top()
+
+    # -------------------------------------------------- suit play
+    def _suit_html(self, title, r):
+        rows = ""
+        for k in sorted(r["dist"], reverse=True):
+            rows += (f"<tr><td style='padding:2px 16px 2px 0'>{k} tricks</td>"
+                     f"<td style='padding:2px 16px 2px 0;text-align:right'>{r['dist'][k]:.0f}%</td>"
+                     f"<td style='text-align:right;color:#888'>{r['cum'][k]:.0f}%</td></tr>")
+        return (f"<h3 style='margin:16px 0 1px'>{title}</h3>"
+                f"<div style='color:#888;font-size:12px;margin-bottom:5px'>"
+                f"{r['top'] or '—'} opposite {r['bottom'] or '—'} · defenders hold {r['missing']}</div>"
+                f"<table cellspacing='0'><tr style='color:#888;font-size:11px'>"
+                f"<td>make</td><td style='text-align:right'>exactly</td>"
+                f"<td style='text-align:right'>at least</td></tr>{rows}</table>")
+
+    def _analyse_suit(self):
+        top, bot = self.suit_top.text().strip(), self.suit_bot.text().strip()
+        if not (top or bot):
+            return
+        from bridge_mc.domain.suitplay import suit_odds
+        try:
+            r = suit_odds(top, bot)
+        except Exception as e:                          # noqa: BLE001
+            self.suit_view.setHtml(f"<p style='color:#b00'>Couldn't parse that: {e}</p>")
+            return
+        self.suit_view.setHtml(self._suit_html("Best play", r))
+
+    def _side_suits(self, result):
+        if not result or not result.config:
+            return None
+        specs = result.config.specs
+        sp1, sp2 = specs.get(result.side[0]), specs.get(result.side[1])
+        if not (sp1 and sp1.kind == "fixed" and sp2 and sp2.kind == "fixed"):
+            return None
+        t = (sp1.fixed.split() + ["", "", "", ""])[:4]
+        b = (sp2.fixed.split() + ["", "", "", ""])[:4]
+        return [(s, t[i], b[i]) for i, s in enumerate(("♠", "♥", "♦", "♣"))]
+
+    def _suits_from_hands(self):
+        combos = self._side_suits(self.last_result)
+        if not combos:
+            self.suit_view.setHtml("<p style='color:#888'>Set both of your hands to "
+                                   "<b>Fixed</b> and Run first, then this breaks down each suit.</p>")
+            return
+        from bridge_mc.domain.suitplay import suit_odds
+        self.suit_view.setHtml("<p style='color:#888'>Solving each suit…</p>")
+        QApplication.processEvents()
+        html = ""
+        for sym, top, bot in combos:
+            if len(top) + len(bot) < 5:                 # short suits: not a play problem
+                continue
+            try:
+                r = suit_odds(top, bot)
+            except Exception:                           # noqa: BLE001
+                continue
+            html += self._suit_html(f"{sym}  {top or '—'} / {bot or '—'}", r)
+        self.suit_view.setHtml(html or "<p style='color:#888'>No long suits to analyse "
+                               "(short suits are skipped).</p>")
 
     # -------------------------------------------------- answer on top
     def _answer_on_top(self):
