@@ -536,10 +536,14 @@ class MainWindow(QMainWindow):
                       f"{k} trick{'s' if k != 1 else ''}</td>" for k in cols)
         cells = "".join(f"<td style='text-align:right;padding:2px 0 2px 20px;font-weight:600'>"
                         f"{r['cum'].get(k, 0):.0f}%</td>" for k in cols)
+        play = r.get("play", "")
+        play_html = (f"<div style='margin:5px 0 9px;font-size:14px'>"
+                     f"<b style='color:#5a86c5'>Play:</b> {play}</div>") if play else ""
         return (f"<h3 style='margin:16px 0 1px'>{title}</h3>"
                 f"<div style='color:#888;font-size:12px;margin-bottom:6px'>"
                 f"{r['top'] or '—'} opposite {r['bottom'] or '—'} · defenders hold {r['missing']} · "
                 f"<b>optimal play — real odds</b> (best line vs best defence)</div>"
+                f"{play_html}"
                 f"<table cellspacing='0'><tr><td></td>{hdr}</tr>"
                 f"<tr><td style='padding-right:6px'>chance of at least</td>{cells}</tr></table>")
 

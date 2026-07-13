@@ -155,6 +155,9 @@ class _Solver:
 
 
 def _splits(missing):
+    """Every raw way the missing cards split between the defenders, a-priori
+    weighted. The multiplicity of equivalent splits is kept ON PURPOSE — it is
+    what lets the defence mix (restricted choice); collapsing it is unsound."""
     m = len(missing)
     for w in range(m + 1):
         wgt = math.comb(26 - m, 13 - w)
@@ -162,10 +165,49 @@ def _splits(missing):
             yield tuple(sorted(set(missing) - set(wset))), tuple(sorted(wset)), wgt
 
 
-def suit_optimal(top: str, bottom: str, max_missing: int = 7) -> dict:
+def _play_desc(N, S, missing, cum):
+    """One-line description of the winning line, inferred from the optimal
+    result and the expected tricks of the drop vs finesse lines."""
+    from .suitplay import _playout
+    if not cum:
+        return ""
+    decl = list(N) + list(S)
+    ms = sorted(missing)
+    hi, dhi = ms[-1], max(decl)
+
+    def finessable(m):
+        # Declarer can finesse for m: a higher card, and a card below m that
+        # beats every OTHER missing card below m (so only m can beat the finesse).
+        below_d = [d for d in decl if d < m]
+        below_m = [x for x in ms if x < m]
+        return (any(d > m for d in decl) and below_d
+                and max(below_d) > (max(below_m) if below_m else -1))
+
+    fk = [m for m in ms if m >= 10 and finessable(m)]   # only finesse for an honour
+    if not fk:
+        if hi > dhi:
+            return f"Knock out the {VALRANK[hi]}, then run the suit."
+        return "No guess — cash your winners from the top."
+
+    def exp(mode):
+        tot = num = 0
+        for E, W, wt in _splits(missing):
+            tot += wt; num += wt * _playout(tuple(N), E, tuple(S), W, mode)
+        return num / tot if tot else 0
+
+    key = VALRANK[max(fk)]
+    de, fe = exp("drop"), exp("finesse")               # expected tricks of each line
+    if abs(de - fe) < 0.02:
+        return f"Finesse the {key} or play for the drop — about even."
+    if de > fe:
+        return "Play for the drop — cash your top honours, don't finesse."
+    return f"Finesse for the {key} — lead low toward your honours."
+
+
+def suit_optimal(top: str, bottom: str, max_missing: int = 4) -> dict:
     """Real best-play odds of each trick count (optimal blind play vs best
-    defence). Returns None-ish (``feasible=False``) if the combination is too big
-    to solve exactly within ``max_missing`` defender cards."""
+    defence). ``feasible=False`` beyond ``max_missing`` defender cards — the raw
+    layout multiplicity (needed for correctness) makes bigger suits intractable."""
     N, S, missing = parse_combo(top, bottom)
     info = {"top": "".join(VALRANK[r] for r in N),
             "bottom": "".join(VALRANK[r] for r in S),
@@ -184,4 +226,5 @@ def suit_optimal(top: str, bottom: str, max_missing: int = 7) -> dict:
         cum[t] = p
         t += 1
     return {**info, "feasible": True, "cum": cum,
-            "max_tricks": max(cum) if cum else 0}
+            "max_tricks": max(cum) if cum else 0,
+            "play": _play_desc(N, S, missing, cum)}
