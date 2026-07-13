@@ -306,3 +306,35 @@ class SimResult:
             pct = 100 * sum(c for t, c in hist.items() if t >= need) / tot
             best = pct if best is None else max(best, pct)
         return best
+
+    def contract_spread(self, label: str, declarer: str | None = None) -> dict | None:
+        """Result distribution for a contract as {relative_tricks: pct}, where
+        the key is DD tricks minus tricks needed: -2 = down 2, 0 = makes exactly,
+        +1 = one overtrick. Answers 'how many does it go off, and how often'.
+        ``declarer`` None picks the seat with the highest make-rate."""
+        lab = label.strip().upper().rstrip("X")
+        if len(lab) < 2 or not lab[0].isdigit():
+            return None
+        level, strain = int(lab[0]), lab[1:]
+        if strain == "NT":
+            strain = "N"
+        seats = self.trick_dist.get(strain)
+        if not seats:
+            return None
+        need = level + 6
+        if declarer:
+            hist = seats.get(declarer.strip().upper())
+        else:
+            hist = max(
+                (h for h in seats.values() if h),
+                key=lambda h: sum(c for t, c in h.items() if t >= need) / sum(h.values()),
+                default=None)
+        if not hist:
+            return None
+        tot = sum(hist.values())
+        if not tot:
+            return None
+        out: dict = {}
+        for t, c in hist.items():
+            out[t - need] = out.get(t - need, 0) + 100 * c / tot
+        return dict(sorted(out.items()))

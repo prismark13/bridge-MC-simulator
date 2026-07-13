@@ -112,8 +112,19 @@ def _resolve_contracts(result, q):
     return refs
 
 
+def _spread_str(spread):
+    """{relative: pct} -> 'down 2 50%, down 1 25%, makes 4%' (skips <0.5%)."""
+    parts = []
+    for rel, pct in spread.items():
+        if pct < 0.5:
+            continue
+        name = f"down {-rel}" if rel < 0 else ("makes exactly" if rel == 0 else f"+{rel}")
+        parts.append(f"{name} {pct:.0f}%")
+    return ", ".join(parts)
+
+
 def _figures(result, q):
-    """Injected make-rates for the contract(s) the question names, or ''."""
+    """Injected make-rate + result spread for the contract(s) the question names."""
     lines = []
     for label, x, dec in _resolve_contracts(result, q):
         pct = result.contract_odds(label, dec)
@@ -121,11 +132,16 @@ def _figures(result, q):
             continue
         who = f" by {dec}" if dec else " (best declarer of the two)"
         dbl = " — doubling doesn't change the tricks, only the score" if x else ""
-        lines.append(f"  {label}{x}{who}: makes {pct:.0f}% of deals{dbl}.")
+        line = f"  {label}{x}{who}: makes {pct:.0f}% of deals{dbl}."
+        spread = result.contract_spread(label, dec)
+        if spread:
+            line += f" Result spread: {_spread_str(spread)}."
+        lines.append(line)
     if not lines:
         return ""
-    return ("Make-rates for the contract(s) in your question "
-            "(from the DD trick distribution):\n" + "\n".join(lines))
+    return ("Figures for the contract(s) in your question (from the DD trick "
+            "distribution — 'down N' means N tricks short, 'makes exactly' = just "
+            "home):\n" + "\n".join(lines))
 
 
 def _summary(result):

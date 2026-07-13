@@ -36,6 +36,9 @@ DEFAULT_DEALER = "N"
 DEFAULT_AUCTION = "P P 1C 1D 1H 3D X P P P"
 DEFAULT_ASK = "what are the odds of 3Dx making?"
 MODES = ["Random", "Fixed", "Constrain"]
+# Report sections shown by default (the rest are one click away).
+REPORT_DEFAULT = {"tiles", "auction", "hands", "competitive"}
+SUIT_SYM = {"C": "♣", "D": "♦", "H": "♥", "S": "♠"}
 
 
 class MainWindow(QMainWindow):
@@ -192,6 +195,36 @@ class MainWindow(QMainWindow):
         ask_row.addWidget(self.ask, 1)
         root.addLayout(ask_row)
 
+        # Suggested questions — filled in after a run, click to ask.
+        sug_row = QHBoxLayout()
+        sl = QLabel("Try"); sl.setStyleSheet("color:#888;"); sug_row.addWidget(sl)
+        self.chip_btns = []
+        self._chip_q = [""] * 4
+        for i in range(4):
+            b = QPushButton("")
+            b.setStyleSheet(
+                "QPushButton{color:#5a86c5;border:1px solid #4a4a4a;border-radius:11px;"
+                "padding:2px 11px;} QPushButton:hover{border-color:#5a86c5;}")
+            b.clicked.connect(lambda _=False, i=i: self._use_suggestion(i))
+            b.hide(); self.chip_btns.append(b); sug_row.addWidget(b)
+        sug_row.addStretch(1)
+        root.addLayout(sug_row)
+
+        # Build-your-own report: toggle each section on/off.
+        rep_row = QHBoxLayout()
+        rl = QLabel("Report"); rl.setStyleSheet("color:#888;"); rep_row.addWidget(rl)
+        self.sec_cb = {}
+        SECTIONS = [("tiles", "summary"), ("auction", "auction"), ("hands", "hands"),
+                    ("tables", "make-rates"), ("competitive", "par/compete"),
+                    ("breakdown", "breakdown"), ("finesse", "card-play"),
+                    ("samples", "samples")]
+        for key, label in SECTIONS:
+            cb = QCheckBox(label); cb.setChecked(key in REPORT_DEFAULT)
+            cb.stateChanged.connect(self._on_sections)
+            self.sec_cb[key] = cb; rep_row.addWidget(cb)
+        rep_row.addStretch(1)
+        root.addLayout(rep_row)
+
         self.tabs = QTabWidget()
         self.report = QWebEngineView()
         self.report.setHtml(self._placeholder("Run a simulation to see the report."))
@@ -254,6 +287,12 @@ class MainWindow(QMainWindow):
         self.ask.setText(DEFAULT_ASK)
         self.last_result = None
         self.last_html = None
+        self._answer = ""
+        self._question = ""
+        for b in self.chip_btns:
+            b.hide()
+        for key, cb in self.sec_cb.items():
+            cb.setChecked(key in REPORT_DEFAULT)
         for b in (self.save_btn, self.browser_btn, self.explain_btn):
             b.setEnabled(False)
         self.report.setHtml(self._placeholder("Run a simulation to see the report."))
@@ -352,6 +391,7 @@ class MainWindow(QMainWindow):
         # A typed question is answered on top of the report automatically.
         self._question = q if (q and self.last_result and self._have_ai()) else ""
         self._answer = ""
+        self._update_suggestions()
         if result.empty:
             self.report.setHtml(render_html(result, self.theme))
         else:
@@ -371,12 +411,64 @@ class MainWindow(QMainWindow):
                 elif self.auto_cb.isChecked():
                     self._explain()
 
+    def _show_set(self):
+        return {k for k, cb in self.sec_cb.items() if cb.isChecked()}
+
     def _render(self):
         self.last_html = render_html(self.last_result, self.theme,
                                      answer=self._answer or None,
-                                     question=self._question or None)
+                                     question=self._question or None,
+                                     show=self._show_set())
         self.report.setHtml(self.last_html)
         self.tabs.setCurrentWidget(self.report)
+
+    def _on_sections(self):
+        if self.last_result:
+            self._render()
+
+    # -------------------------------------------------- suggestions
+    def _sym(self, label):
+        if label.endswith("NT") or not label[-1:].isalpha():
+            return label
+        return label[:-1] + SUIT_SYM.get(label[-1], label[-1])
+
+    def _suggestions(self, r):
+        out = []
+        a = r.auction
+        if a:
+            c, dd = a.contract, "x" * a.doubled
+            out.append((f"odds {self._sym(c)}{dd} makes",
+                        f"what are the odds of {c}{dd} making?"))
+            out.append(("how many off?",
+                        f"how many tricks does {c}{dd} go off, and how often?"))
+            if not a.on_our_side:
+                out.append(("beat it how often?",
+                            f"how often do we beat {c}{dd}, and by how much?"))
+        bg, bs = r.best_game, r.best_slam
+        if bs and bs.make_rate >= 15 and len(out) < 4:
+            out.append((f"how safe is {self._sym(bs.label)}?",
+                        f"how safe is {bs.label} — what are the odds it makes?"))
+        if bg and len(out) < 4:
+            out.append((f"odds {self._sym(bg.label)}",
+                        f"what are the odds of {bg.label} making?"))
+        return out[:4]
+
+    def _update_suggestions(self):
+        sug = self._suggestions(self.last_result) if self.last_result else []
+        for i, b in enumerate(self.chip_btns):
+            if i < len(sug):
+                b.setText(sug[i][0]); self._chip_q[i] = sug[i][1]; b.show()
+            else:
+                b.hide(); self._chip_q[i] = ""
+
+    def _use_suggestion(self, i):
+        q = self._chip_q[i] if i < len(self._chip_q) else ""
+        if not q:
+            return
+        self.ask.setText(q)
+        if self.last_result and self._have_ai():
+            self._question = q
+            self._answer_on_top()
 
     # -------------------------------------------------- answer on top
     def _answer_on_top(self):

@@ -395,7 +395,13 @@ def _answer_html(question, answer):
             f'<p class="aq">{_esc(question)}</p>{body}</section>')
 
 
-def render_html(result, theme: str = "light", answer=None, question=None) -> str:
+ALL_SECTIONS = ("tiles", "auction", "hands", "tables", "competitive",
+                "finesse", "breakdown", "samples")
+
+
+def render_html(result, theme: str = "light", answer=None, question=None,
+                show=None) -> str:
+    show = ALL_SECTIONS if show is None else set(show)
     specs = result.config.specs if result.config else {}
     head = (f'<!doctype html><html data-theme="{theme}"><head><meta charset="utf-8">'
             f'<title>Bridge MC report</title><style>{_css()}</style></head><body>'
@@ -460,6 +466,38 @@ def render_html(result, theme: str = "light", answer=None, question=None) -> str
                    '<h2>Sample layouts from the run</h2>'
                    f'<div class="egs">{egs}</div></section>')
 
+    # Each section is opt-in via ``show`` so the app can toggle them on/off.
+    sec_tiles = f"""
+  <section>
+    <p class="kicker">{"The picture at a glance" if competitive else f"Contract success · {side}, realistic declarer"}</p>
+    <h2>{"Their hand — your options" if competitive else f"How often {side}'s contracts make"}</h2>
+    <div class="tiles">{tiles}</div>
+  </section>""" if "tiles" in show else ""
+    sec_auction = _auction_html(result) if "auction" in show else ""
+    sec_hands = f"""
+  <section>
+    <p class="kicker">The deal setup</p>
+    <h2>What was dealt</h2>
+    <div class="hand-grid">{cards}</div>
+  </section>""" if "hands" in show else ""
+    sec_tables = f"""
+  <section>
+    <p class="kicker">Make-rates with 95% confidence intervals</p>
+    <h2>{"Your games" if competitive else f"Every game &amp; slam for {side}"}</h2>
+    <div class="tbl-wrap">
+      <p class="gcap">Games</p>
+      <table><thead><tr><th>Contract</th><th>Make-rate</th><th>&nbsp;</th><th style="text-align:right">Avg score</th></tr></thead>
+        <tbody>{game_rows}</tbody></table>
+      {"" if competitive else f'<p class="gcap" style="margin-top:22px">Slams</p><table><tbody>{slam_rows}</tbody></table><p class="gcap" style="margin-top:22px">Grands</p><table><tbody>{grand_rows}</tbody></table>'}
+    </div>
+  </section>""" if "tables" in show else ""
+    sec_comp = _competitive_html(result) if "competitive" in show else ""
+    sec_sac = (_sacrifice_html(result)
+               if ("competitive" in show and competitive and not result.we_own) else "")
+    sec_finesse = _finesse_html(result) if "finesse" in show else ""
+    sec_breakdown = _breakdown_html(result.breakdown) if "breakdown" in show else ""
+    sec_samples = samples if "samples" in show else ""
+
     return head + f"""
   {_answer_html(question, answer)}
   <header class="hero">
@@ -474,42 +512,15 @@ def render_html(result, theme: str = "light", answer=None, question=None) -> str
     </div>
     {conf_badge}
   </header>
-
-  <section>
-    <p class="kicker">{"The picture at a glance" if competitive else f"Contract success · {side}, realistic declarer"}</p>
-    <h2>{"Their hand — your options" if competitive else f"How often {side}'s contracts make"}</h2>
-    <div class="tiles">{tiles}</div>
-  </section>
-
-  {_auction_html(result)}
-
-  <section>
-    <p class="kicker">The deal setup</p>
-    <h2>What was dealt</h2>
-    <div class="hand-grid">{cards}</div>
-  </section>
-
-  <section>
-    <p class="kicker">Make-rates with 95% confidence intervals</p>
-    <h2>{"Your games" if competitive else f"Every game &amp; slam for {side}"}</h2>
-    <div class="tbl-wrap">
-      <p class="gcap">Games</p>
-      <table><thead><tr><th>Contract</th><th>Make-rate</th><th>&nbsp;</th><th style="text-align:right">Avg score</th></tr></thead>
-        <tbody>{game_rows}</tbody></table>
-      {"" if competitive else f'<p class="gcap" style="margin-top:22px">Slams</p><table><tbody>{slam_rows}</tbody></table><p class="gcap" style="margin-top:22px">Grands</p><table><tbody>{grand_rows}</tbody></table>'}
-    </div>
-  </section>
-
-  {_competitive_html(result)}
-
-  {_sacrifice_html(result) if (competitive and not result.we_own) else ""}
-
-  {_finesse_html(result)}
-
-  {_breakdown_html(result.breakdown)}
-
-  {samples}
-
+  {sec_tiles}
+  {sec_auction}
+  {sec_hands}
+  {sec_tables}
+  {sec_comp}
+  {sec_sac}
+  {sec_finesse}
+  {sec_breakdown}
+  {sec_samples}
   <footer class="foot">
     <div class="method">
       <span>ENGINE · bundled DDS (Bo Haglund)</span>
