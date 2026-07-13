@@ -13,20 +13,36 @@ solver is an information-set min-max:
     so the info set splits by rank; the defenders pick the split that minimises
     declarer's success (this coupling is the crux of the problem).
 
-Tractability comes from card-equivalence collapsing (adjacent cards with nothing
-between them are interchangeable) plus memoisation on the info set. Exact for the
-holdings people actually analyse (opponents up to ~6 cards); callers fall back to
-an estimate beyond that.
+Tractability comes from two collapses plus memoisation on the info set:
+
+  * card-equivalence in play (``_reps``) — adjacent cards with nothing between
+    them are interchangeable when choosing what to play;
+  * world-equivalence (``_worlds``/``_runs``) — a run of missing cards with no
+    declarer card between them is a "blob": only how many each defender holds
+    matters, not which. This shrinks 2^m raw splits to prod(run+1) worlds and,
+    crucially, is SOUND (unlike collapsing honour layouts, which erases the
+    defence's restricted-choice mixing and inflates declarer's result).
+
+The theory is the "best defence" model of Frank & Basin (1998); the single-suit
+precedent is Warmerdam's SuitPlay. Feasibility is gated on the collapsed world
+count and a wall-clock budget — nearly every real holding is exact; only the
+hardest two-honour double-finesses (e.g. KJ9x opposite Qxx) fall back to an
+estimate.
 """
 from __future__ import annotations
 
 import math
+import time
 from itertools import combinations
 
 from .suitplay import parse_combo, VALRANK
 
 _CLOCK = {"N": "E", "E": "S", "S": "W", "W": "N"}
 _NS = frozenset({"N", "S"})
+
+
+class _Timeout(Exception):
+    """Raised when a solve exceeds its wall-clock budget; the caller falls back."""
 
 
 def _rm(t, c):
@@ -46,8 +62,9 @@ def _reps(hand, blockers):
 
 
 class _Solver:
-    def __init__(self):
+    def __init__(self, deadline=None):
         self.memo = {}
+        self.deadline = deadline
 
     def V(self, N, S, worlds, need):
         """Max weighted success: total weight of layouts where declarer takes
@@ -56,6 +73,8 @@ class _Solver:
             return float(sum(w for _, _, w in worlds))
         if not N and not S:
             return 0.0
+        if self.deadline is not None and time.monotonic() > self.deadline:
+            raise _Timeout
         key = (N, S, worlds, need)
         got = self.memo.get(key)
         if got is not None:
@@ -165,6 +184,59 @@ def _splits(missing):
             yield tuple(sorted(set(missing) - set(wset))), tuple(sorted(wset)), wgt
 
 
+def _runs(missing, decl):
+    """Split the missing cards into maximal runs uninterrupted by a declarer
+    card. Cards inside one run are interchangeable (a "blob"): declarer can't
+    tell them apart and neither can the defence exploit which is which, so only
+    HOW MANY each defender holds matters — not their identity."""
+    ms = sorted(missing)
+    if not ms:
+        return []
+    runs, cur = [], [ms[0]]
+    for c in ms[1:]:
+        if any(cur[-1] < d < c for d in decl):   # a declarer card sits between
+            runs.append(cur)
+            cur = [c]
+        else:
+            cur.append(c)
+    runs.append(cur)
+    return runs
+
+
+def _worlds(N, S, missing):
+    """Distinct defender layouts after collapsing interchangeable low cards.
+
+    Instead of 2^m raw splits, one per (per-run count) choice: a run of length L
+    contributes L+1 states (0..L cards to West), and equivalent raw splits are
+    merged with their a-priori weight summed. This is SOUND — unlike collapsing
+    honour layouts — because a run's cards can never win a trick apart from each
+    other, so merging them removes no defensive choice. World count is
+    prod(len(run)+1), which stays small when few honours are missing."""
+    from itertools import product
+    decl = set(N) | set(S)
+    m = len(missing)
+    runs = _runs(missing, decl)
+    if not runs:
+        return ((tuple(), tuple(), math.comb(26, 13)),)
+    out = []
+    for counts in product(*[range(len(r) + 1) for r in runs]):
+        eset, wset, mult = [], [], 1
+        for run, w in zip(runs, counts):     # give West the top w of each run
+            wset += run[len(run) - w:]
+            eset += run[:len(run) - w]
+            mult *= math.comb(len(run), w)
+        wgt = mult * math.comb(26 - m, 13 - len(wset))
+        out.append((tuple(sorted(eset)), tuple(sorted(wset)), wgt))
+    return tuple(out)
+
+
+def _world_count(N, S, missing):
+    prod = 1
+    for r in _runs(missing, set(N) | set(S)):
+        prod *= len(r) + 1
+    return prod
+
+
 def _play_desc(N, S, missing, cum):
     """One-line description of the winning line, inferred from the optimal
     result and the expected tricks of the drop vs finesse lines."""
@@ -204,27 +276,36 @@ def _play_desc(N, S, missing, cum):
     return f"Finesse for the {key} — lead low toward your honours."
 
 
-def suit_optimal(top: str, bottom: str, max_missing: int = 4) -> dict:
+def suit_optimal(top: str, bottom: str, max_worlds: int = 200,
+                 time_budget: float = 20.0) -> dict:
     """Real best-play odds of each trick count (optimal blind play vs best
-    defence). ``feasible=False`` beyond ``max_missing`` defender cards — the raw
-    layout multiplicity (needed for correctness) makes bigger suits intractable."""
+    defence). Feasibility is gated on the COLLAPSED world count, not the raw
+    number of missing cards: interchangeable low spots merge into blobs, so a
+    suit missing many low cards but few honours is still exact. A wall-clock
+    budget is the real safety net — the two-honour double-finesse holdings have
+    few worlds but expensive defensive coupling. ``feasible=False`` when either
+    bound trips, and the caller falls back to the estimate."""
     N, S, missing = parse_combo(top, bottom)
     info = {"top": "".join(VALRANK[r] for r in N),
             "bottom": "".join(VALRANK[r] for r in S),
-            "missing": "".join(VALRANK[r] for r in sorted(missing, reverse=True)) or "—"}
-    if len(missing) > max_missing:
+            "missing": "".join(VALRANK[r] for r in sorted(missing, reverse=True)) or "—",
+            "worlds": _world_count(N, S, missing)}
+    if info["worlds"] > max_worlds:
         return {**info, "feasible": False}
-    worlds = tuple(_splits(missing))
+    worlds = _worlds(N, S, missing)
     total = sum(w for _, _, w in worlds) or 1
     N, S = tuple(sorted(N)), tuple(sorted(S))
-    solver = _Solver()
+    solver = _Solver(deadline=time.monotonic() + time_budget)
     cum, t = {}, 1
-    while t <= len(N) + len(S):
-        p = 100 * solver.V(N, S, worlds, t) / total
-        if p < 0.05:
-            break
-        cum[t] = p
-        t += 1
+    try:
+        while t <= len(N) + len(S):
+            p = 100 * solver.V(N, S, worlds, t) / total
+            if p < 0.05:
+                break
+            cum[t] = p
+            t += 1
+    except _Timeout:
+        return {**info, "feasible": False}
     return {**info, "feasible": True, "cum": cum,
             "max_tricks": max(cum) if cum else 0,
             "play": _play_desc(N, S, missing, cum)}

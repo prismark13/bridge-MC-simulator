@@ -46,7 +46,7 @@ class SuitWorker(QThread):
         out = []
         for title, top, bot in self.items:
             try:
-                r = suit_optimal(top, bot, max_missing=4)
+                r = suit_optimal(top, bot)
                 if r.get("feasible"):
                     out.append((title, r, True))
                 else:
