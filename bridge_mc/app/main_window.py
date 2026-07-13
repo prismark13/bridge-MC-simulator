@@ -19,7 +19,7 @@ from ..domain import (
     ORDER, SUITS, VUL_LABEL, VUL_STATES, SimConfig, build_specs, parse_suit)
 from ..engine.sampling import smart_seat
 from ..report import render_html, render_text
-from .card_picker import CardPicker
+from .card_picker import CardPicker, SuitPicker
 from .theming import apply_palette
 from .workers import AiWorker, SimWorker, SuitWorker
 
@@ -245,6 +245,7 @@ class MainWindow(QMainWindow):
         self.suit_bot = QLineEdit(); self.suit_bot.setPlaceholderText("Qxxx")
         self.suit_bot.setMaximumWidth(150); self.suit_bot.returnPressed.connect(self._analyse_suit)
         srow.addWidget(self.suit_bot)
+        pk = QPushButton("Cards…"); pk.clicked.connect(self._pick_suit); srow.addWidget(pk)
         ab = QPushButton("Analyse"); ab.clicked.connect(self._analyse_suit); srow.addWidget(ab)
         mb = QPushButton("From my hands"); mb.clicked.connect(self._suits_from_hands)
         srow.addWidget(mb)
@@ -546,6 +547,14 @@ class MainWindow(QMainWindow):
                 f"{play_html}"
                 f"<table cellspacing='0'><tr><td></td>{hdr}</tr>"
                 f"<tr><td style='padding-right:6px'>chance of at least</td>{cells}</tr></table>")
+
+    def _pick_suit(self):
+        dlg = SuitPicker(self, self.suit_top.text().strip(), self.suit_bot.text().strip())
+        if dlg.exec():
+            top, bot = dlg.holdings()
+            self.suit_top.setText(top); self.suit_bot.setText(bot)
+            if top or bot:
+                self._start_suits([("Best play", top, bot)])
 
     def _analyse_suit(self):
         top, bot = self.suit_top.text().strip(), self.suit_bot.text().strip()

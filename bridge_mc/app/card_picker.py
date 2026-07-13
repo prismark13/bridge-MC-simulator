@@ -130,3 +130,88 @@ class CardPicker(QDialog):
                         key=lambda r: _ORDER[r])
             parts.append("".join(rs) or "-")
         return " ".join(parts)
+
+
+def _named(s):
+    """Ranks named in a holding string (ignores x); '10' -> 'T'."""
+    s = (s or "").upper().replace("10", "T")
+    return [ch for ch in s if ch in _ORDER]
+
+
+class SuitPicker(QDialog):
+    """Pick one suit combination: click a rank to cycle it through
+    defenders / top hand / bottom hand."""
+    _TOP = "#3a68b0"        # blue
+    _BOT = "#2c7a50"        # green
+
+    def __init__(self, parent, top="", bottom=""):
+        super().__init__(parent)
+        self.setWindowTitle("Pick the suit")
+        self.state = {r: None for r in RANKS}
+        for r in _named(top):
+            self.state[r] = "T"
+        for r in _named(bottom):
+            self.state[r] = "B"
+        self.buttons = {}
+
+        root = QVBoxLayout(self)
+        info = QLabel("Click a card to cycle it:  — (defenders)  →  Top  →  Bottom.")
+        info.setStyleSheet("color:#888;")
+        root.addWidget(info)
+        self.preview = QLabel()
+        self.preview.setTextFormat(Qt.TextFormat.RichText)
+        self.preview.setStyleSheet("font-family:Consolas,monospace;font-size:16px;padding:6px 2px;")
+        root.addWidget(self.preview)
+
+        row = QHBoxLayout()
+        row.setSpacing(3)
+        for r in RANKS:
+            b = QPushButton("10" if r == "T" else r)
+            b.setFixedSize(38, 34)
+            b.clicked.connect(lambda _=False, rr=r: self._cycle(rr))
+            row.addWidget(b)
+            self.buttons[r] = b
+        root.addLayout(row)
+
+        foot = QHBoxLayout()
+        foot.addStretch(1)
+        clear = QPushButton("Clear")
+        clear.clicked.connect(self._clear)
+        foot.addWidget(clear)
+        root.addLayout(foot)
+
+        box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        box.accepted.connect(self.accept)
+        box.rejected.connect(self.reject)
+        root.addWidget(box)
+        self._refresh()
+
+    def _cycle(self, r):
+        self.state[r] = {None: "T", "T": "B", "B": None}[self.state[r]]
+        self._refresh()
+
+    def _clear(self):
+        self.state = {r: None for r in RANKS}
+        self._refresh()
+
+    def _refresh(self):
+        for r, b in self.buttons.items():
+            s = self.state[r]
+            bg = self._TOP if s == "T" else self._BOT if s == "B" else ""
+            if bg:
+                b.setStyleSheet(f"QPushButton{{background:{bg};color:#fff;"
+                                f"border:1px solid {bg};font-weight:700}}")
+            else:
+                b.setStyleSheet("QPushButton{font-weight:600}")
+        top, bot = self.holdings()
+        opps = "".join(r for r in RANKS if self.state[r] is None) or "—"
+        self.preview.setText(
+            f'<span style="color:{self._TOP}">Top&nbsp; {top or "—"}</span>'
+            f'&nbsp;&nbsp;&nbsp;<span style="color:{self._BOT}">Bottom&nbsp; {bot or "—"}</span>'
+            f'&nbsp;&nbsp;&nbsp;<span style="color:#888">Defenders&nbsp; {opps}</span>')
+
+    def holdings(self):
+        top = "".join(r for r in RANKS if self.state[r] == "T")
+        bot = "".join(r for r in RANKS if self.state[r] == "B")
+        return top, bot
