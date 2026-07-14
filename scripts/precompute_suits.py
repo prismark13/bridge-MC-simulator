@@ -14,9 +14,19 @@ import sys
 import time
 from itertools import product
 
-from bridge_mc.domain.suitplay import VALRANK
+from bridge_mc.domain.suitplay import VALRANK, parse_combo
 from bridge_mc.domain import suitcache as SC
 from bridge_mc.domain.suitplay_opt import suit_optimal
+
+
+def _storable(top, bot):
+    """Only exact results are cached. The collapse path (>4 missing cards) is
+    exact just for <=1 missing honour; anything else is an estimate we won't
+    store, so skip it rather than burn the budget."""
+    _, _, missing = parse_combo(top, bot)
+    if len(missing) <= 4:
+        return True
+    return sum(1 for c in missing if c >= 10) <= 1
 
 HONS = [14, 13, 12, 11, 10, 9]          # A K Q J T 9
 LOWS = [8, 7, 6, 5, 4, 3, 2]            # spot cards
@@ -54,6 +64,8 @@ def main():
     done = exact = ceil = 0
     t0 = time.time()
     for top, bot in holdings(max_def):
+        if not _storable(top, bot):                 # would be an estimate, not cached
+            continue
         if SC.get(top, bot):                        # already cached (exact)
             continue
         if done >= cap:
