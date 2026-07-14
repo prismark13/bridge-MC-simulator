@@ -61,6 +61,22 @@ def _reps(hand, blockers):
     return out
 
 
+def _classes(hand, blockers):
+    """Equivalence classes of playable cards: maximal runs of consecutive cards
+    with no blocker between them. The cards in a class are interchangeable in
+    play, but a *defender* playing one still reveals a specific rank to declarer
+    — so restricted choice requires playing each with equal probability (see
+    ``_dmin``)."""
+    h = sorted(hand)
+    out = []
+    for c in h:
+        if out and not any(out[-1][-1] < b < c for b in blockers):
+            out[-1].append(c)
+        else:
+            out.append([c])
+    return out
+
+
 class _Solver:
     def __init__(self, deadline=None):
         self.memo = {}
@@ -158,9 +174,7 @@ class _Solver:
         n = len(wl)
         best = [float("inf")]
 
-        def dfs(i, groups, lo):
-            if lo >= best[0]:
-                return
+        def dfs(i, groups):
             if self.deadline is not None:
                 self._ticks += 1
                 if not (self._ticks & 0x3FF) and time.monotonic() > self.deadline:
@@ -178,15 +192,31 @@ class _Solver:
             dc = E if dseat == "E" else W
             if not dc:
                 g = dict(groups); g[None] = g.get(None, ()) + ((E, W, wt),)
-                dfs(i + 1, g, lo)
+                dfs(i + 1, g)
                 return
             other = W if dseat == "E" else E
-            for c in _reps(dc, declset | set(other)):
-                nd = _rm(dc, c)
-                nw = (nd, W, wt) if dseat == "E" else (E, nd, wt)
-                g = dict(groups); g[c] = g.get(c, ()) + (nw,)
-                dfs(i + 1, g, lo)
-        dfs(0, {}, 0.0)
+            # The defender minimises over which equivalence CLASS to play. Within
+            # a class the cards are interchangeable, but playing one still reveals
+            # a rank. Restricted choice: an *honour* is revealed as its own rank,
+            # so a KQ doubleton must produce a K and a Q with equal probability —
+            # aligning with the singleton-K / singleton-Q observations so declarer
+            # can't over-infer. Low spots reveal nothing declarer can use, so they
+            # collapse to one observation (splitting them would let declarer
+            # condition on a distinction that isn't really there, inflating).
+            for cls in _classes(dc, declset | set(other)):
+                honours = [c for c in cls if c >= 10]
+                lows = [c for c in cls if c < 10]
+                plays = [(h, h, 1) for h in honours]        # each honour: 1 card
+                if lows:
+                    plays.append((lows[0], lows[0], len(lows)))   # all lows -> 1 obs
+                g = dict(groups)
+                k = len(cls)
+                for card, key, mult in plays:
+                    nd = _rm(dc, card)
+                    nw = (nd, W, wt * mult / k) if dseat == "E" else (E, nd, wt * mult / k)
+                    g[key] = g.get(key, ()) + (nw,)
+                dfs(i + 1, g)
+        dfs(0, {})
         return best[0]
 
 
@@ -258,17 +288,6 @@ def _world_count(N, S, missing):
     for r in _runs(missing, set(N) | set(S)):
         prod *= len(r) + 1
     return prod
-
-
-def _restricted_choice(N, S, missing):
-    """True if the defenders can hold two *touching* honours (no declarer card of
-    a rank between them) — e.g. missing K-Q. Optimal defence then randomises
-    which honour to play (restricted choice); a pure-strategy solver can't, so
-    the result runs slightly high. Used only to withhold the 'exact' label."""
-    decl = set(N) | set(S)
-    hon = sorted(c for c in missing if c >= 10)
-    return any(not any(a < d < b for d in decl)
-               for a, b in zip(hon, hon[1:]))
 
 
 def _play_desc(N, S, missing, cum):
@@ -353,22 +372,20 @@ def suit_optimal(top: str, bottom: str, max_worlds: int = 200,
             return {**info, "feasible": True, "exact": hit["exact"], "cached": True,
                     "cum": hit["cum"], "max_tricks": max(hit["cum"]) if hit["cum"] else 0,
                     "play": _play_desc(tuple(sorted(N)), tuple(sorted(S)), missing, hit["cum"])}
-    # Raw is exact but costs 2^m worlds; the collapse is fast but a ~1% estimate
-    # on rich two-honour holdings (non-locality). Use raw while it's cheap (every
-    # 9+ card fit), collapse only beyond. exact=True marks a guaranteed value.
-    # It is withheld when the defenders can falsecard between touching honours
-    # (restricted choice): the correct defence there is a *randomised* play our
-    # pure-strategy solver can't make, so the result runs ~0.5% high (verified
-    # against SuitPlay: AJT9x/xxxx reads 76.6 vs the true 76.0).
-    rc = _restricted_choice(N, S, missing)
+    # Raw is exact (restricted choice included — the defender randomises equal
+    # honours, see _dmin) but costs 2^m worlds. The collapse is fast but merges
+    # low-card worlds, which loses ~1-2% on rich two-honour holdings (Frank &
+    # Basin non-locality). So: raw while it's cheap (every 9+ card fit), collapse
+    # only beyond, and the collapse is exact only when it merges nothing that
+    # matters — at most one missing honour.
     if (1 << m) <= 16:
         worlds = tuple(_splits(missing))
-        exact = not rc
+        exact = True
     else:
         if info["worlds"] > max_worlds:
             return _ceiling(top, bottom, info)
         worlds = _worlds(N, S, missing)
-        exact = honours <= 1 and not rc
+        exact = honours <= 1
     total = sum(w for _, _, w in worlds) or 1
     N, S = tuple(sorted(N)), tuple(sorted(S))
     solver = _Solver(deadline=time.monotonic() + time_budget)

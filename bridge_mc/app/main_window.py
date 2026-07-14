@@ -536,7 +536,7 @@ class MainWindow(QMainWindow):
         hdr = "".join(f"<td style='text-align:right;color:#888;font-size:11px;padding-left:20px'>"
                       f"{k} trick{'s' if k != 1 else ''}</td>" for k in cols)
         cells = "".join(f"<td style='text-align:right;padding:2px 0 2px 20px;font-weight:600'>"
-                        f"{r['cum'].get(k, 0):.0f}%</td>" for k in cols)
+                        f"{r['cum'].get(k, 0):.1f}%</td>" for k in cols)
         play = r.get("play", "")
         play_html = (f"<div style='margin:5px 0 9px;font-size:14px'>"
                      f"<b style='color:#5a86c5'>Play:</b> {play}</div>") if play else ""
