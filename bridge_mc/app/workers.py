@@ -42,15 +42,12 @@ class SuitWorker(QThread):
 
     def run(self):
         from ..domain.suitplay_opt import suit_optimal
-        from ..domain.suitplay import suit_real
         out = []
         for title, top, bot in self.items:
             try:
-                r = suit_optimal(top, bot)
-                if r.get("feasible"):
-                    out.append((title, r, True))
-                else:
-                    out.append((title, suit_real(top, bot), False))
+                # Always returns a usable result: exact single-dummy where it can
+                # solve in time, else the verified double-dummy ceiling.
+                out.append((title, suit_optimal(top, bot), True))
             except Exception as e:    # noqa: BLE001
                 out.append((title, {"error": str(e)}, False))
         self.done.emit(out)

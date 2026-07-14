@@ -100,7 +100,8 @@ class _Solver:
                                     _CLOCK[_CLOCK[_CLOCK[o]]]])(lh)
         return self._dmin(worlds, s2, set(N1) | set(S1),
                           lambda sw, c2: self._third(N1, S1, sw, lh, lc,
-                                                     s2, c2, s3, s4, need))
+                                                     s2, c2, s3, s4, need),
+                          table=(lc,))
 
     def _third(self, N1, S1, worlds, lh, lc, s2, c2, s3, s4, need):
         hand = N1 if s3 == "N" else S1
@@ -108,9 +109,14 @@ class _Solver:
             return self._fourth(N1, S1, worlds, lh, lc, s2, c2, s3, None, s4, need)
         miss = set(worlds[0][0]) | set(worlds[0][1])
         other = set(S1 if s3 == "N" else N1)
+        # The highest card already on the table decides who is winning the trick
+        # so far, so it must block equivalence — else a card that would win the
+        # current trick gets collapsed with a lower one. Only the max matters
+        # (lower table cards are already beaten), which keeps branching down.
+        hi = max([lc] + ([c2] if c2 is not None else []))
         best = 0.0
         tot = sum(w for _, _, w in worlds)
-        for c3 in _reps(hand, other | miss):
+        for c3 in _reps(hand, other | miss | {hi}):
             v = self._fourth(N1, S1, worlds, lh, lc, s2, c2, s3, c3, s4, need)
             if v > best:
                 best = v
@@ -128,7 +134,8 @@ class _Solver:
         if c3 is not None:
             played[s3] = c3
         return self._dmin(worlds, s4, set(N2) | set(S2),
-                          lambda sw, c4: self._resolve(N2, S2, sw, played, s4, c4, need))
+                          lambda sw, c4: self._resolve(N2, S2, sw, played, s4, c4, need),
+                          table=tuple(played.values()))
 
     def _resolve(self, N2, S2, worlds, played, s4, c4, need):
         trick = dict(played)
@@ -137,10 +144,15 @@ class _Solver:
         won = 1 if max(trick, key=lambda k: trick[k]) in _NS else 0
         return self.V(N2, S2, worlds, need - won)
 
-    def _dmin(self, worlds, dseat, declset, cont):
+    def _dmin(self, worlds, dseat, declset, cont, table=()):
         """Defender ``dseat`` plays in each layout; declarer observes the rank so
         the info set splits; defenders choose the split minimising declarer's
-        success. Branch-and-bound DFS over the (equivalence-collapsed) choices."""
+        success. Branch-and-bound DFS over the (equivalence-collapsed) choices.
+        ``table`` holds the cards already played to this trick — the highest
+        blocks equivalence so a card that could win the current trick isn't
+        collapsed with a low spot (lower table cards are already beaten)."""
+        if table:
+            declset = declset | {max(table)}
         wl = list(worlds)
         n = len(wl)
         best = [float("inf")]
@@ -185,16 +197,22 @@ def _splits(missing):
 
 
 def _runs(missing, decl):
-    """Split the missing cards into maximal runs uninterrupted by a declarer
-    card. Cards inside one run are interchangeable (a "blob"): declarer can't
-    tell them apart and neither can the defence exploit which is which, so only
-    HOW MANY each defender holds matters — not their identity."""
+    """Split the missing cards into maximal runs of interchangeable low spots.
+    Cards inside one run are a "blob": declarer can't tell them apart and the
+    defence can't exploit which is which, so only HOW MANY each defender holds
+    matters. A run breaks on a declarer card sitting between two spots, and on
+    an HONOUR (rank >= 10): touching honours like QJ look interchangeable for
+    trick-winning but are NOT for the info set — collapsing them erases the
+    defence's restricted-choice mixing (playing the Q vs the J from QJ), which
+    biases the result. Honours therefore stay as their own singleton runs."""
     ms = sorted(missing)
     if not ms:
         return []
     runs, cur = [], [ms[0]]
     for c in ms[1:]:
-        if any(cur[-1] < d < c for d in decl):   # a declarer card sits between
+        between = any(cur[-1] < d < c for d in decl)
+        honour = c >= 10 or cur[-1] >= 10
+        if between or honour:
             runs.append(cur)
             cur = [c]
         else:
@@ -276,8 +294,22 @@ def _play_desc(N, S, missing, cum):
     return f"Finesse for the {key} — lead low toward your honours."
 
 
+def _ceiling(top, bottom, info):
+    """Fallback for holdings too costly to solve exactly: the double-dummy
+    result (verified correct, computed per-layout). It's an upper bound on the
+    real blind-play odds — and exact whenever best defence can't beat a guess,
+    which is most two-honour holdings. Flagged ceiling=True so the UI can say so."""
+    from .suitplay import suit_odds
+    N, S, missing = parse_combo(top, bottom)
+    dd = suit_odds(top, bottom)
+    cum = dd.get("cum", {})
+    return {**info, "feasible": True, "exact": False, "ceiling": True,
+            "cum": cum, "max_tricks": max(cum) if cum else 0,
+            "play": _play_desc(tuple(sorted(N)), tuple(sorted(S)), missing, cum)}
+
+
 def suit_optimal(top: str, bottom: str, max_worlds: int = 200,
-                 time_budget: float = 20.0) -> dict:
+                 time_budget: float = 8.0) -> dict:
     """Real best-play odds of each trick count (optimal blind play vs best
     defence). Feasibility is gated on the COLLAPSED world count, not the raw
     number of missing cards: interchangeable low spots merge into blobs, so a
@@ -286,13 +318,24 @@ def suit_optimal(top: str, bottom: str, max_worlds: int = 200,
     few worlds but expensive defensive coupling. ``feasible=False`` when either
     bound trips, and the caller falls back to the estimate."""
     N, S, missing = parse_combo(top, bottom)
+    m = len(missing)
+    honours = sum(1 for c in missing if c >= 10)
     info = {"top": "".join(VALRANK[r] for r in N),
             "bottom": "".join(VALRANK[r] for r in S),
             "missing": "".join(VALRANK[r] for r in sorted(missing, reverse=True)) or "—",
             "worlds": _world_count(N, S, missing)}
-    if info["worlds"] > max_worlds:
-        return {**info, "feasible": False}
-    worlds = _worlds(N, S, missing)
+    # Raw is exact but costs 2^m worlds; the collapse is fast but a ~1% estimate
+    # on rich two-honour holdings (non-locality). Use raw while it's cheap (every
+    # 9+ card fit), collapse only beyond. exact=True marks a guaranteed value:
+    # raw always, or the collapse when <=1 missing honour (provably sound there).
+    if (1 << m) <= 16:
+        worlds = tuple(_splits(missing))
+        exact = True
+    else:
+        if info["worlds"] > max_worlds:
+            return _ceiling(top, bottom, info)
+        worlds = _worlds(N, S, missing)
+        exact = honours <= 1
     total = sum(w for _, _, w in worlds) or 1
     N, S = tuple(sorted(N)), tuple(sorted(S))
     solver = _Solver(deadline=time.monotonic() + time_budget)
@@ -305,7 +348,7 @@ def suit_optimal(top: str, bottom: str, max_worlds: int = 200,
             cum[t] = p
             t += 1
     except _Timeout:
-        return {**info, "feasible": False}
-    return {**info, "feasible": True, "cum": cum,
+        return _ceiling(top, bottom, info)
+    return {**info, "feasible": True, "exact": exact, "cum": cum,
             "max_tricks": max(cum) if cum else 0,
             "play": _play_desc(N, S, missing, cum)}

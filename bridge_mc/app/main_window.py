@@ -540,10 +540,17 @@ class MainWindow(QMainWindow):
         play = r.get("play", "")
         play_html = (f"<div style='margin:5px 0 9px;font-size:14px'>"
                      f"<b style='color:#5a86c5'>Play:</b> {play}</div>") if play else ""
+        if r.get("ceiling"):
+            basis = ("<b>double-dummy odds</b> (best-case; the exact blind-play "
+                     "solve is too costly for this holding)")
+        elif r.get("exact"):
+            basis = "<b>exact real odds</b> (best line vs best defence)"
+        else:
+            basis = "<b>real odds</b> vs best defence (estimate, within ~1%)"
         return (f"<h3 style='margin:16px 0 1px'>{title}</h3>"
                 f"<div style='color:#888;font-size:12px;margin-bottom:6px'>"
                 f"{r['top'] or '—'} opposite {r['bottom'] or '—'} · defenders hold {r['missing']} · "
-                f"<b>optimal play — real odds</b> (best line vs best defence)</div>"
+                f"{basis}</div>"
                 f"{play_html}"
                 f"<table cellspacing='0'><tr><td></td>{hdr}</tr>"
                 f"<tr><td style='padding-right:6px'>chance of at least</td>{cells}</tr></table>")
