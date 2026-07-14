@@ -260,6 +260,17 @@ def _world_count(N, S, missing):
     return prod
 
 
+def _restricted_choice(N, S, missing):
+    """True if the defenders can hold two *touching* honours (no declarer card of
+    a rank between them) — e.g. missing K-Q. Optimal defence then randomises
+    which honour to play (restricted choice); a pure-strategy solver can't, so
+    the result runs slightly high. Used only to withhold the 'exact' label."""
+    decl = set(N) | set(S)
+    hon = sorted(c for c in missing if c >= 10)
+    return any(not any(a < d < b for d in decl)
+               for a, b in zip(hon, hon[1:]))
+
+
 def _play_desc(N, S, missing, cum):
     """One-line description of the winning line, inferred from the optimal
     result and the expected tricks of the drop vs finesse lines."""
@@ -344,16 +355,20 @@ def suit_optimal(top: str, bottom: str, max_worlds: int = 200,
                     "play": _play_desc(tuple(sorted(N)), tuple(sorted(S)), missing, hit["cum"])}
     # Raw is exact but costs 2^m worlds; the collapse is fast but a ~1% estimate
     # on rich two-honour holdings (non-locality). Use raw while it's cheap (every
-    # 9+ card fit), collapse only beyond. exact=True marks a guaranteed value:
-    # raw always, or the collapse when <=1 missing honour (provably sound there).
+    # 9+ card fit), collapse only beyond. exact=True marks a guaranteed value.
+    # It is withheld when the defenders can falsecard between touching honours
+    # (restricted choice): the correct defence there is a *randomised* play our
+    # pure-strategy solver can't make, so the result runs ~0.5% high (verified
+    # against SuitPlay: AJT9x/xxxx reads 76.6 vs the true 76.0).
+    rc = _restricted_choice(N, S, missing)
     if (1 << m) <= 16:
         worlds = tuple(_splits(missing))
-        exact = True
+        exact = not rc
     else:
         if info["worlds"] > max_worlds:
             return _ceiling(top, bottom, info)
         worlds = _worlds(N, S, missing)
-        exact = honours <= 1
+        exact = honours <= 1 and not rc
     total = sum(w for _, _, w in worlds) or 1
     N, S = tuple(sorted(N)), tuple(sorted(S))
     solver = _Solver(deadline=time.monotonic() + time_budget)
