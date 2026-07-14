@@ -65,6 +65,7 @@ class _Solver:
     def __init__(self, deadline=None):
         self.memo = {}
         self.deadline = deadline
+        self._ticks = 0
 
     def V(self, N, S, worlds, need):
         """Max weighted success: total weight of layouts where declarer takes
@@ -160,6 +161,10 @@ class _Solver:
         def dfs(i, groups, lo):
             if lo >= best[0]:
                 return
+            if self.deadline is not None:
+                self._ticks += 1
+                if not (self._ticks & 0x3FF) and time.monotonic() > self.deadline:
+                    raise _Timeout
             if i == n:
                 s = 0.0
                 for cv, mem in groups.items():

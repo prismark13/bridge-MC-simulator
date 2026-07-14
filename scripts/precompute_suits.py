@@ -22,12 +22,13 @@ HONS = [14, 13, 12, 11, 10, 9]          # A K Q J T 9
 LOWS = [8, 7, 6, 5, 4, 3, 2]            # spot cards
 
 
-def holdings():
-    """Yield (top, bottom) representatives, deduped by canonical form."""
+def holdings(max_def=6):
+    """Yield (top, bottom) representatives, deduped by canonical form.
+    ``max_def`` caps defenders' length (13 - declarer length)."""
     seen = set()
     for lenN in range(1, 12):
         for lenS in range(1, lenN + 1):
-            if not (6 <= lenN + lenS <= 11):        # realistic declarer lengths
+            if not (13 - max_def <= lenN + lenS <= 11):   # realistic lengths
                 continue
             for hp in product("NSD", repeat=len(HONS)):
                 hn = [HONS[i] for i in range(len(HONS)) if hp[i] == "N"]
@@ -49,9 +50,10 @@ def holdings():
 def main():
     budget = float(sys.argv[1]) if len(sys.argv) > 1 else 120.0
     cap = int(sys.argv[2]) if len(sys.argv) > 2 else 10 ** 9
+    max_def = int(sys.argv[3]) if len(sys.argv) > 3 else 6
     done = exact = ceil = 0
     t0 = time.time()
-    for top, bot in holdings():
+    for top, bot in holdings(max_def):
         if SC.get(top, bot):                        # already cached (exact)
             continue
         if done >= cap:
