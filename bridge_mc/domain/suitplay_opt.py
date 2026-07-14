@@ -309,7 +309,7 @@ def _ceiling(top, bottom, info):
 
 
 def suit_optimal(top: str, bottom: str, max_worlds: int = 200,
-                 time_budget: float = 8.0) -> dict:
+                 time_budget: float = 8.0, use_cache: bool = True) -> dict:
     """Real best-play odds of each trick count (optimal blind play vs best
     defence). Feasibility is gated on the COLLAPSED world count, not the raw
     number of missing cards: interchangeable low spots merge into blobs, so a
@@ -324,6 +324,19 @@ def suit_optimal(top: str, bottom: str, max_worlds: int = 200,
             "bottom": "".join(VALRANK[r] for r in S),
             "missing": "".join(VALRANK[r] for r in sorted(missing, reverse=True)) or "—",
             "worlds": _world_count(N, S, missing)}
+    # A previously-solved holding is instant: the answer never changes, so it is
+    # cached by canonical form (see suitcache). Only exact hits are stored, so a
+    # cached ceiling never blocks a later exact solve.
+    if use_cache:
+        try:
+            from .suitcache import get as _cache_get
+            hit = _cache_get(top, bottom)
+        except Exception:      # noqa: BLE001
+            hit = None
+        if hit:
+            return {**info, "feasible": True, "exact": hit["exact"], "cached": True,
+                    "cum": hit["cum"], "max_tricks": max(hit["cum"]) if hit["cum"] else 0,
+                    "play": _play_desc(tuple(sorted(N)), tuple(sorted(S)), missing, hit["cum"])}
     # Raw is exact but costs 2^m worlds; the collapse is fast but a ~1% estimate
     # on rich two-honour holdings (non-locality). Use raw while it's cheap (every
     # 9+ card fit), collapse only beyond. exact=True marks a guaranteed value:
@@ -349,6 +362,12 @@ def suit_optimal(top: str, bottom: str, max_worlds: int = 200,
             t += 1
     except _Timeout:
         return _ceiling(top, bottom, info)
+    if exact:                     # only guaranteed values are worth caching
+        try:
+            from .suitcache import put as _cache_put
+            _cache_put(top, bottom, cum, True)
+        except Exception:         # noqa: BLE001
+            pass
     return {**info, "feasible": True, "exact": exact, "cum": cum,
             "max_tricks": max(cum) if cum else 0,
             "play": _play_desc(N, S, missing, cum)}
