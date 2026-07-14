@@ -565,8 +565,14 @@ class MainWindow(QMainWindow):
 
     def _analyse_suit(self):
         top, bot = self.suit_top.text().strip(), self.suit_bot.text().strip()
-        if top or bot:
+        if top and bot:
             self._start_suits([("Best play", top, bot)])
+        else:
+            self.suit_view.setHtml(
+                "<p style='color:#b0243a'>Enter the suit in <b>both</b> hands — "
+                "e.g. <b>AKxxx</b> in one and <b>Qxxx</b> in the other. "
+                "(The greyed <i>AKxxx</i> / <i>Qxxx</i> are just examples, not values.)</p>"
+                "<p style='color:#888'>Or click <b>Cards…</b> to pick the suit visually.</p>")
 
     def _start_suits(self, items):
         self.suit_view.setHtml("<p style='color:#888'>Solving optimal play… "
