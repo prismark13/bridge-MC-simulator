@@ -531,12 +531,18 @@ class MainWindow(QMainWindow):
                        f"</table>")
 
     def _suit_html_opt(self, title, r):
+        cum = r["cum"]
         mt = r["max_tricks"]
         cols = [k for k in range(mt, max(mt - 3, 0), -1)]
+
+        def pct(k):                 # P(>= k); cum omits the trivial low levels
+            if k in cum:
+                return cum[k]
+            return 100.0 if (cum and k < min(cum)) else 0.0
         hdr = "".join(f"<td style='text-align:right;color:#888;font-size:11px;padding-left:20px'>"
                       f"{k} trick{'s' if k != 1 else ''}</td>" for k in cols)
         cells = "".join(f"<td style='text-align:right;padding:2px 0 2px 20px;font-weight:600'>"
-                        f"{r['cum'].get(k, 0):.1f}%</td>" for k in cols)
+                        f"{pct(k):.1f}%</td>" for k in cols)
         play = r.get("play", "")
         play_html = (f"<div style='margin:5px 0 9px;font-size:14px'>"
                      f"<b style='color:#5a86c5'>Play:</b> {play}</div>") if play else ""
@@ -549,7 +555,8 @@ class MainWindow(QMainWindow):
             basis = "<b>real odds</b> vs best defence (estimate, within ~1%)"
         return (f"<h3 style='margin:16px 0 1px'>{title}</h3>"
                 f"<div style='color:#888;font-size:12px;margin-bottom:6px'>"
-                f"{r['top'] or '—'} opposite {r['bottom'] or '—'} · defenders hold {r['missing']} · "
+                f"{r['top'] or '<i>void</i>'} opposite {r['bottom'] or '<i>void</i>'} · "
+                f"defenders hold {r['missing']} · "
                 f"{basis}</div>"
                 f"{play_html}"
                 f"<table cellspacing='0'><tr><td></td>{hdr}</tr>"
@@ -565,13 +572,13 @@ class MainWindow(QMainWindow):
 
     def _analyse_suit(self):
         top, bot = self.suit_top.text().strip(), self.suit_bot.text().strip()
-        if top and bot:
+        if top or bot:              # one hand may legitimately be void
             self._start_suits([("Best play", top, bot)])
         else:
             self.suit_view.setHtml(
-                "<p style='color:#b0243a'>Enter the suit in <b>both</b> hands — "
-                "e.g. <b>AKxxx</b> in one and <b>Qxxx</b> in the other. "
-                "(The greyed <i>AKxxx</i> / <i>Qxxx</i> are just examples, not values.)</p>"
+                "<p style='color:#b0243a'>Enter the suit in at least one hand — "
+                "e.g. <b>AKxxx</b> opposite <b>Qxxx</b> (the greyed text is just an "
+                "example). Leave one side blank for a void opposite.</p>"
                 "<p style='color:#888'>Or click <b>Cards…</b> to pick the suit visually.</p>")
 
     def _start_suits(self, items):
