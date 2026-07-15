@@ -301,12 +301,16 @@ def _play_desc(N, S, missing, cum):
     hi, dhi = ms[-1], max(decl)
 
     def finessable(m):
-        # Declarer can finesse for m: a higher card, and a card below m that
-        # beats every OTHER missing card below m (so only m can beat the finesse).
-        below_d = [d for d in decl if d < m]
+        # A finesse for m needs the capturing honour (a card > m) AND a covering
+        # card (below m but topping every OTHER outstanding low card) in ONE hand,
+        # and a card in the OTHER hand to lead toward it. So a void opposite can
+        # never finesse — you can only cash from the top.
         below_m = [x for x in ms if x < m]
-        return (any(d > m for d in decl) and below_d
-                and max(below_d) > (max(below_m) if below_m else -1))
+        thr = max(below_m) if below_m else -1
+        for hand, other in ((N, S), (S, N)):
+            if other and any(c > m for c in hand) and any(thr < c < m for c in hand):
+                return True
+        return False
 
     fk = [m for m in ms if m >= 10 and finessable(m)]   # only finesse for an honour
     if not fk:
