@@ -41,14 +41,20 @@ class SuitWorker(QThread):
         self.items = items
 
     def run(self):
-        from ..domain.suitplay_opt import suit_optimal
+        from ..domain.suitplay_opt import suit_optimal, suit_lines
         out = []
         for title, top, bot in self.items:
             try:
                 # Always returns a usable result: exact single-dummy where it can
                 # solve in time, else the verified double-dummy ceiling.
-                out.append((title, suit_optimal(top, bot), True))
-            except Exception as e:    # noqa: BLE001
+                r = suit_optimal(top, bot)
+                if not r.get("ceiling") and r.get("max_tricks"):
+                    try:
+                        r["lines"] = suit_lines(top, bot, r["max_tricks"])
+                    except Exception:      # noqa: BLE001
+                        r["lines"] = []
+                out.append((title, r, True))
+            except Exception as e:         # noqa: BLE001
                 out.append((title, {"error": str(e)}, False))
         self.done.emit(out)
 

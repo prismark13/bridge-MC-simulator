@@ -412,3 +412,60 @@ def suit_optimal(top: str, bottom: str, max_worlds: int = 200,
     return {**info, "feasible": True, "exact": exact, "cum": cum,
             "max_tricks": max(cum) if cum else 0,
             "play": _play_desc(N, S, missing, cum)}
+
+
+def _describe_opening(lh, lc, other, missing):
+    """Short human name for opening with card ``lc`` from hand ``lh``."""
+    name = VALRANK[lc]
+    hand = "top" if lh == "N" else "opposite"
+    if lc > (max(missing) if missing else 0):
+        return f"Cash the {name}"
+    if lc >= 10:                              # an honour, but not a sure winner
+        return f"Lead the {name} ({hand} hand)"
+    oh = [VALRANK[c] for c in sorted(other, reverse=True) if c >= 10]
+    if oh:
+        return f"Low toward the {''.join(oh)}"
+    return f"Lead low from the {hand} hand"
+
+
+def suit_lines(top: str, bottom: str, goal: int,
+               time_budget: float = 4.0, max_worlds: int = 200):
+    """The distinct opening lines for making ``goal`` tricks, each with its exact
+    success chance (best line vs best defence). Returns [] when there is only one
+    real line (e.g. a plain drop) or the holding is too costly — so the UI only
+    shows a line list when there's a genuine choice (which way to finesse, cash
+    vs lead toward, etc.). Lines that differ only in a later-round guess are not
+    separated here."""
+    N, S, missing = parse_combo(top, bottom)
+    m = len(missing)
+    if (1 << m) <= 16:
+        worlds = tuple(_splits(missing))
+    elif _world_count(N, S, missing) > max_worlds:
+        return []
+    else:
+        worlds = _worlds(N, S, missing)
+    total = sum(w for _, _, w in worlds) or 1
+    N, S = tuple(sorted(N)), tuple(sorted(S))
+    solver = _Solver(deadline=time.monotonic() + time_budget)
+    miss = set(worlds[0][0]) | set(worlds[0][1])
+    best = {}                                 # description -> best success %
+    try:
+        for lh, hand in (("N", N), ("S", S)):
+            other = S if lh == "N" else N
+            for lc in _reps(hand, set(other) | miss):
+                v = 100 * solver._lead(N, S, worlds, lh, lc, goal) / total
+                d = _describe_opening(lh, lc, other, missing)
+                if v > best.get(d, -1):
+                    best[d] = v
+    except _Timeout:
+        return []
+    ranked = sorted(((round(v, 1), d) for d, v in best.items() if v > 0.05),
+                    key=lambda x: -x[0])
+    seen, uniq = set(), []                    # one line per distinct success %
+    for v, d in ranked:
+        if v not in seen:
+            seen.add(v)
+            uniq.append((v, d))
+    if len(uniq) < 2:                         # no genuine alternative
+        return []
+    return uniq[:3]

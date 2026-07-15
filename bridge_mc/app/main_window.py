@@ -502,34 +502,6 @@ class MainWindow(QMainWindow):
             self._answer_on_top()
 
     # -------------------------------------------------- suit play
-    def _suit_html(self, title, r):
-        mt = r["max_tricks"]
-        cols = [k for k in range(mt, max(mt - 3, 0), -1)]
-
-        def row(label, cum, strong=False):
-            w = "font-weight:600;" if strong else ""
-            cells = "".join(f"<td style='text-align:right;padding:2px 0 2px 18px;{w}'>"
-                            f"{cum.get(k, 0):.0f}%</td>" for k in cols)
-            return f"<tr><td style='padding:2px 0;{w}'>{label}</td>{cells}</tr>"
-
-        hdr = "".join(f"<td style='text-align:right;color:#888;font-size:11px;padding-left:18px'>"
-                      f"{k} trick{'s' if k != 1 else ''}</td>" for k in cols)
-        head = (f"<h3 style='margin:16px 0 1px'>{title}</h3>"
-                f"<div style='color:#888;font-size:12px;margin-bottom:6px'>"
-                f"{r['top'] or '—'} opposite {r['bottom'] or '—'} · defenders hold {r['missing']} "
-                f"· chance of <b>at least</b> N tricks, real odds vs best defence</div>")
-        if r["no_guess"]:
-            return head + (f"<table cellspacing='0'><tr><td></td>{hdr}</tr>"
-                           f"{row('cash it — no guess', r['lines']['drop']['cum'], True)}</table>")
-        rec = r["best"]
-        dl = "play for the drop" + ("  ✓" if rec == "drop" else "")
-        fl = "take the finesse" + ("  ✓" if rec == "finesse" else "")
-        return head + (f"<table cellspacing='0'><tr><td></td>{hdr}</tr>"
-                       f"{row(dl, r['lines']['drop']['cum'], rec == 'drop')}"
-                       f"{row(fl, r['lines']['finesse']['cum'], rec == 'finesse')}"
-                       f"{row('perfect-guess ceiling', r['ceiling'])}"
-                       f"</table>")
-
     def _suit_html_opt(self, title, r):
         cum = r["cum"]
         mt = r["max_tricks"]
@@ -539,28 +511,51 @@ class MainWindow(QMainWindow):
             if k in cum:
                 return cum[k]
             return 100.0 if (cum and k < min(cum)) else 0.0
-        hdr = "".join(f"<td style='text-align:right;color:#888;font-size:11px;padding-left:20px'>"
-                      f"{k} trick{'s' if k != 1 else ''}</td>" for k in cols)
-        cells = "".join(f"<td style='text-align:right;padding:2px 0 2px 20px;font-weight:600'>"
-                        f"{pct(k):.1f}%</td>" for k in cols)
-        play = r.get("play", "")
-        play_html = (f"<div style='margin:5px 0 9px;font-size:14px'>"
-                     f"<b style='color:#5a86c5'>Play:</b> {play}</div>") if play else ""
+
         if r.get("ceiling"):
-            basis = ("<b>double-dummy odds</b> (best-case; the exact blind-play "
-                     "solve is too costly for this holding)")
+            badge = "<span style='color:#8a6d3b;font-weight:600'>double-dummy</span>"
+            note = "best-case; the exact blind-play solve is too costly here"
         elif r.get("exact"):
-            basis = "<b>exact real odds</b> (best line vs best defence)"
+            badge = "<span style='color:#2c7a50;font-weight:600'>exact</span>"
+            note = "best line vs best defence"
         else:
-            basis = "<b>real odds</b> vs best defence (estimate, within ~1%)"
-        return (f"<h3 style='margin:16px 0 1px'>{title}</h3>"
-                f"<div style='color:#888;font-size:12px;margin-bottom:6px'>"
-                f"{r['top'] or '<i>void</i>'} opposite {r['bottom'] or '<i>void</i>'} · "
-                f"defenders hold {r['missing']} · "
-                f"{basis}</div>"
-                f"{play_html}"
-                f"<table cellspacing='0'><tr><td></td>{hdr}</tr>"
-                f"<tr><td style='padding-right:6px'>chance of at least</td>{cells}</tr></table>")
+            badge = "<span style='color:#8a6d3b;font-weight:600'>estimate ±1%</span>"
+            note = "best line vs best defence"
+
+        top, bot = r["top"] or "<i>void</i>", r["bottom"] or "<i>void</i>"
+        head = ""
+        if title and title != "Best play":
+            head = f"<div style='font-weight:600;font-size:13px;margin:14px 0 2px'>{title}</div>"
+        html = (head +
+                f"<div style='font-size:16px;margin:10px 0 2px'>"
+                f"<b>{top}</b> <span style='color:#888'>opposite</span> <b>{bot}</b>"
+                f"&nbsp;&nbsp;{badge}</div>"
+                f"<div style='color:#888;font-size:12px;margin-bottom:9px'>"
+                f"defenders hold {r['missing']} · {note}</div>")
+
+        play = r.get("play", "")
+        if play:
+            html += (f"<div style='font-size:14px;margin:0 0 11px'>"
+                     f"<span style='color:#5a86c5;font-weight:600'>Play:</span> {play}</div>")
+
+        hdr = "".join(f"<td style='text-align:right;color:#888;font-size:11px;padding-left:24px'>"
+                      f"{k} trick{'s' if k != 1 else ''}</td>" for k in cols)
+        vals = "".join(f"<td style='text-align:right;padding-left:24px;font-weight:600;"
+                       f"font-size:15px'>{pct(k):.1f}%</td>" for k in cols)
+        html += (f"<table cellspacing='0' cellpadding='0'>"
+                 f"<tr><td style='color:#888;font-size:11px'>chance of at least</td>{hdr}</tr>"
+                 f"<tr><td></td>{vals}</tr></table>")
+
+        lines = r.get("lines") or []
+        if lines:
+            rows = "".join(
+                f"<tr><td style='padding:1px 18px 1px 0'>{d}</td>"
+                f"<td style='text-align:right;font-weight:600'>{v:.1f}%</td></tr>"
+                for v, d in lines)
+            html += (f"<div style='color:#888;font-size:11px;margin:13px 0 3px'>"
+                     f"if you play differently ({mt} tricks)</div>"
+                     f"<table cellspacing='0' cellpadding='0'>{rows}</table>")
+        return f"<div style='margin-bottom:10px'>{html}</div>"
 
     def _pick_suit(self):
         dlg = SuitPicker(self, self.suit_top.text().strip(), self.suit_bot.text().strip())
@@ -590,13 +585,11 @@ class MainWindow(QMainWindow):
 
     def _render_suits(self, results):
         html = ""
-        for title, r, is_opt in results:
+        for title, r, _is_opt in results:
             if "error" in r:
                 html += f"<p style='color:#b00'>{title}: {r['error']}</p>"
-            elif is_opt:
-                html += self._suit_html_opt(title, r)
             else:
-                html += self._suit_html(title, r)
+                html += self._suit_html_opt(title, r)
         self.suit_view.setHtml(html or "<p style='color:#888'>Nothing to analyse.</p>")
 
     def _side_suits(self, result):
