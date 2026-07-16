@@ -102,7 +102,10 @@ class _Solver:
         for lh, hand in (("N", N), ("S", S)):
             other = set(S if lh == "N" else N)
             for lc in _reps(hand, other | miss):
-                v = self._lead(N, S, worlds, lh, lc, need)
+                # alpha cutoff: a lead only matters if it beats the best so far,
+                # so the defender search can stop as soon as it drives this lead
+                # to <= best (it won't be chosen), pruning most of the tree.
+                v = self._lead(N, S, worlds, lh, lc, need, best)
                 if v > best:
                     best = v
                     if best >= sum(w for _, _, w in worlds):
@@ -112,14 +115,14 @@ class _Solver:
         self.memo[key] = best
         return best
 
-    def _lead(self, N, S, worlds, lh, lc, need):
+    def _lead(self, N, S, worlds, lh, lc, need, alpha=float("-inf")):
         N1, S1 = (_rm(N, lc), S) if lh == "N" else (N, _rm(S, lc))
         _, s2, s3, s4 = (lambda o: [o, _CLOCK[o], _CLOCK[_CLOCK[o]],
                                     _CLOCK[_CLOCK[_CLOCK[o]]]])(lh)
         return self._dmin(worlds, s2, set(N1) | set(S1),
                           lambda sw, c2: self._third(N1, S1, sw, lh, lc,
                                                      s2, c2, s3, s4, need),
-                          table=(lc,))
+                          table=(lc,), alpha=alpha)
 
     def _third(self, N1, S1, worlds, lh, lc, s2, c2, s3, s4, need):
         hand = N1 if s3 == "N" else S1
@@ -162,13 +165,15 @@ class _Solver:
         won = 1 if max(trick, key=lambda k: trick[k]) in _NS else 0
         return self.V(N2, S2, worlds, need - won)
 
-    def _dmin(self, worlds, dseat, declset, cont, table=()):
+    def _dmin(self, worlds, dseat, declset, cont, table=(), alpha=float("-inf")):
         """Defender ``dseat`` plays in each layout; declarer observes the rank so
         the info set splits; defenders choose the split minimising declarer's
         success. Branch-and-bound DFS over the (equivalence-collapsed) choices.
         ``table`` holds the cards already played to this trick — the highest
         blocks equivalence so a card that could win the current trick isn't
-        collapsed with a low spot (lower table cards are already beaten)."""
+        collapsed with a low spot (lower table cards are already beaten).
+        ``alpha`` is declarer's best lead so far: once the defence drives the
+        value to <= alpha this lead can't be chosen, so the search aborts."""
         if table:
             declset = declset | {max(table)}
         wl = list(worlds)
@@ -176,6 +181,8 @@ class _Solver:
         best = [float("inf")]
 
         def dfs(i, groups):
+            if best[0] <= alpha:            # defence already refuted this lead
+                return
             if self.deadline is not None:
                 self._ticks += 1
                 if not (self._ticks & 0x3FF) and time.monotonic() > self.deadline:
