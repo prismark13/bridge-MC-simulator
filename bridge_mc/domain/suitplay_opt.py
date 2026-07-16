@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import math
 import time
+from fractions import Fraction
 from itertools import combinations
 
 from .suitplay import parse_combo, VALRANK
@@ -290,9 +291,12 @@ def _world_count(N, S, missing):
     return prod
 
 
-def _play_desc(N, S, missing, cum):
+def _play_desc(N, S, missing, cum, reliable_guess=True):
     """One-line description of the winning line, inferred from the optimal
-    result and the expected tricks of the drop vs finesse lines."""
+    result and the expected tricks of the drop vs finesse lines. The finesse-vs-
+    drop call leans on a line-playout that under-rates the finesse, so on
+    holdings we couldn't solve exactly (``reliable_guess=False``) we suppress
+    that guess rather than assert a line that may well be wrong."""
     from .suitplay import _playout
     if not cum:
         return ""
@@ -326,11 +330,17 @@ def _play_desc(N, S, missing, cum):
 
     key = VALRANK[max(fk)]
     de, fe = exp("drop"), exp("finesse")               # expected tricks of each line
+    finesse = f"Finesse for the {key} — lead low toward your honours."
+    if not reliable_guess:
+        # We couldn't solve exactly, and the playout under-rates the finesse — so
+        # trust it only when it STILL prefers finessing (then the finesse is
+        # certainly right). If it prefers the drop, the honest answer is unknown.
+        return finesse if fe >= de else ""
     if abs(de - fe) < 0.02:
         return f"Finesse the {key} or play for the drop — about even."
     if de > fe:
         return "Play for the drop — cash your top honours, don't finesse."
-    return f"Finesse for the {key} — lead low toward your honours."
+    return finesse
 
 
 def _ceiling(top, bottom, info):
@@ -344,7 +354,8 @@ def _ceiling(top, bottom, info):
     cum = dd.get("cum", {})
     return {**info, "feasible": True, "exact": False, "ceiling": True,
             "cum": cum, "max_tricks": max(cum) if cum else 0,
-            "play": _play_desc(tuple(sorted(N)), tuple(sorted(S)), missing, cum)}
+            "play": _play_desc(tuple(sorted(N)), tuple(sorted(S)), missing, cum,
+                               reliable_guess=False)}
 
 
 def suit_optimal(top: str, bottom: str, max_worlds: int = 200,
@@ -390,6 +401,10 @@ def suit_optimal(top: str, bottom: str, max_worlds: int = 200,
             return _ceiling(top, bottom, info)
         worlds = _worlds(N, S, missing)
         exact = honours <= 1
+    # Exact (Fraction) weights: the restricted-choice split divides a weight by
+    # the class size, and float rounding there makes transposed positions hash
+    # differently, defeating memoisation. Fractions keep it exact and fast.
+    worlds = tuple((e, w, Fraction(wt)) for e, w, wt in worlds)
     total = sum(w for _, _, w in worlds) or 1
     N, S = tuple(sorted(N)), tuple(sorted(S))
     solver = _Solver(deadline=time.monotonic() + time_budget)
@@ -444,6 +459,7 @@ def suit_lines(top: str, bottom: str, goal: int,
         return []
     else:
         worlds = _worlds(N, S, missing)
+    worlds = tuple((e, w, Fraction(wt)) for e, w, wt in worlds)
     total = sum(w for _, _, w in worlds) or 1
     N, S = tuple(sorted(N)), tuple(sorted(S))
     solver = _Solver(deadline=time.monotonic() + time_budget)
