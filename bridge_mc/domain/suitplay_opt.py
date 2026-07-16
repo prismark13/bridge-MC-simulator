@@ -138,14 +138,18 @@ class _Solver:
         best = 0.0
         tot = sum(w for _, _, w in worlds)
         for c3 in _reps(hand, other | miss | {hi}):
-            v = self._fourth(N1, S1, worlds, lh, lc, s2, c2, s3, c3, s4, need)
+            # 3rd hand is declarer maximising, so pass its running best down as
+            # an alpha bound: the 4th-seat defender search can abort once it
+            # drives this c3 to <= best (that c3 won't be chosen).
+            v = self._fourth(N1, S1, worlds, lh, lc, s2, c2, s3, c3, s4, need, best)
             if v > best:
                 best = v
                 if best >= tot:
                     break
         return best
 
-    def _fourth(self, N1, S1, worlds, lh, lc, s2, c2, s3, c3, s4, need):
+    def _fourth(self, N1, S1, worlds, lh, lc, s2, c2, s3, c3, s4, need,
+                alpha=float("-inf")):
         N2, S2 = N1, S1
         if c3 is not None:
             N2, S2 = (_rm(N1, c3), S1) if s3 == "N" else (N1, _rm(S1, c3))
@@ -156,7 +160,7 @@ class _Solver:
             played[s3] = c3
         return self._dmin(worlds, s4, set(N2) | set(S2),
                           lambda sw, c4: self._resolve(N2, S2, sw, played, s4, c4, need),
-                          table=tuple(played.values()))
+                          table=tuple(played.values()), alpha=alpha)
 
     def _resolve(self, N2, S2, worlds, played, s4, c4, need):
         trick = dict(played)
@@ -179,8 +183,9 @@ class _Solver:
         wl = list(worlds)
         n = len(wl)
         best = [float("inf")]
+        groups = {}          # observed rank -> list of worlds, mutated in place
 
-        def dfs(i, groups):
+        def dfs(i):
             if best[0] <= alpha:            # defence already refuted this lead
                 return
             if self.deadline is not None:
@@ -190,6 +195,8 @@ class _Solver:
             if i == n:
                 s = 0.0
                 for cv, mem in groups.items():
+                    if not mem:
+                        continue
                     s += cont(tuple(sorted(mem)), cv)
                     if s >= best[0]:
                         return
@@ -199,8 +206,9 @@ class _Solver:
             E, W, wt = wl[i]
             dc = E if dseat == "E" else W
             if not dc:
-                g = dict(groups); g[None] = g.get(None, ()) + ((E, W, wt),)
-                dfs(i + 1, g)
+                groups.setdefault(None, []).append((E, W, wt))
+                dfs(i + 1)
+                groups[None].pop()
                 return
             other = W if dseat == "E" else E
             # The defender minimises over which equivalence CLASS to play. Within
@@ -217,14 +225,17 @@ class _Solver:
                 plays = [(h, h, 1) for h in honours]        # each honour: 1 card
                 if lows:
                     plays.append((lows[0], lows[0], len(lows)))   # all lows -> 1 obs
-                g = dict(groups)
                 k = len(cls)
+                added = []
                 for card, key, mult in plays:
                     nd = _rm(dc, card)
                     nw = (nd, W, wt * mult / k) if dseat == "E" else (E, nd, wt * mult / k)
-                    g[key] = g.get(key, ()) + (nw,)
-                dfs(i + 1, g)
-        dfs(0, {})
+                    groups.setdefault(key, []).append(nw)
+                    added.append(key)
+                dfs(i + 1)
+                for key in added:
+                    groups[key].pop()
+        dfs(0)
         return best[0]
 
 
