@@ -316,8 +316,9 @@ def suit_vec(top: str, bottom: str, time_budget: float = 30.0) -> dict:
             tied = [d for p, d in lines if p >= best - 0.005]
             play = tied[0] if len(tied) == 1 else \
                 "Equally good starts: " + " / ".join(d.rstrip(".") for d in tied) + "."
-    return {"top": "".join(VALRANK[r] for r in N),
-            "bottom": "".join(VALRANK[r] for r in S),
+    # hands are held sorted ascending internally; display them high-to-low
+    return {"top": "".join(VALRANK[r] for r in sorted(N, reverse=True)),
+            "bottom": "".join(VALRANK[r] for r in sorted(S, reverse=True)),
             "missing": "".join(VALRANK[r] for r in sorted(missing, reverse=True)) or "—",
             "worlds": n, "strategies": len(vecs), "cum": cum,
             "max_tricks": max(cum) if cum else 0, "exact": True, "play": play,

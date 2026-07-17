@@ -139,41 +139,55 @@ def _named(s):
 
 
 class SuitPicker(QDialog):
-    """Pick one suit combination: click a rank to cycle it through
-    defenders / top hand / bottom hand."""
-    _TOP = "#3a68b0"        # blue
-    _BOT = "#2c7a50"        # green
+    """Pick one suit combination: a row of cards per hand. Click a card in the
+    Hand 1 row to give it to Hand 1, in the Hand 2 row to give it to Hand 2.
+    Click it again to hand it back to the defenders. A card can only be in one
+    place, so clicking it in one row takes it out of the other."""
+    _H1 = "#3a68b0"         # blue
+    _H2 = "#2c7a50"         # green
 
     def __init__(self, parent, top="", bottom=""):
         super().__init__(parent)
         self.setWindowTitle("Pick the suit")
-        self.state = {r: None for r in RANKS}
+        self.state = {r: None for r in RANKS}      # None | "1" | "2"
         for r in _named(top):
-            self.state[r] = "T"
+            self.state[r] = "1"
         for r in _named(bottom):
-            self.state[r] = "B"
-        self.buttons = {}
+            self.state[r] = "2"
+        self.buttons = {"1": {}, "2": {}}
 
         root = QVBoxLayout(self)
-        info = QLabel("Click a card to cycle it:  — (defenders)  →  Top  →  Bottom.")
+        info = QLabel("Click a card in a row to give it to that hand; click again "
+                      "to give it back to the defenders.")
         info.setStyleSheet("color:#888;")
         root.addWidget(info)
+
         self.preview = QLabel()
         self.preview.setTextFormat(Qt.TextFormat.RichText)
-        self.preview.setStyleSheet("font-family:Consolas,monospace;font-size:16px;padding:6px 2px;")
+        self.preview.setStyleSheet(
+            "font-family:Consolas,monospace;font-size:16px;padding:8px 2px;")
         root.addWidget(self.preview)
 
-        row = QHBoxLayout()
-        row.setSpacing(3)
-        for r in RANKS:
-            b = QPushButton("10" if r == "T" else r)
-            b.setFixedSize(38, 34)
-            b.clicked.connect(lambda _=False, rr=r: self._cycle(rr))
-            row.addWidget(b)
-            self.buttons[r] = b
-        root.addLayout(row)
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(3)
+        grid.setVerticalSpacing(6)
+        for row, (hand, colour) in enumerate(((("1"), self._H1), (("2"), self._H2))):
+            lab = QLabel(f"Hand {hand}")
+            lab.setStyleSheet(f"color:{colour};font-weight:700;padding-right:8px")
+            grid.addWidget(lab, row, 0)
+            for ci, rank in enumerate(RANKS):
+                b = QPushButton("10" if rank == "T" else rank)
+                b.setFixedSize(38, 32)
+                b.clicked.connect(
+                    lambda _=False, rr=rank, hh=hand: self._toggle(rr, hh))
+                grid.addWidget(b, row, ci + 1)
+                self.buttons[hand][rank] = b
+        root.addLayout(grid)
 
         foot = QHBoxLayout()
+        self.count = QLabel()
+        self.count.setStyleSheet("color:#888")
+        foot.addWidget(self.count)
         foot.addStretch(1)
         clear = QPushButton("Clear")
         clear.clicked.connect(self._clear)
@@ -187,8 +201,8 @@ class SuitPicker(QDialog):
         root.addWidget(box)
         self._refresh()
 
-    def _cycle(self, r):
-        self.state[r] = {None: "T", "T": "B", "B": None}[self.state[r]]
+    def _toggle(self, rank, hand):
+        self.state[rank] = None if self.state[rank] == hand else hand
         self._refresh()
 
     def _clear(self):
@@ -196,22 +210,25 @@ class SuitPicker(QDialog):
         self._refresh()
 
     def _refresh(self):
-        for r, b in self.buttons.items():
-            s = self.state[r]
-            bg = self._TOP if s == "T" else self._BOT if s == "B" else ""
-            if bg:
-                b.setStyleSheet(f"QPushButton{{background:{bg};color:#fff;"
-                                f"border:1px solid {bg};font-weight:700}}")
-            else:
-                b.setStyleSheet("QPushButton{font-weight:600}")
-        top, bot = self.holdings()
+        for hand, colour in (("1", self._H1), ("2", self._H2)):
+            for rank, b in self.buttons[hand].items():
+                if self.state[rank] == hand:
+                    b.setStyleSheet(f"QPushButton{{background:{colour};color:#fff;"
+                                    f"border:1px solid {colour};font-weight:700}}")
+                elif self.state[rank] is not None:
+                    b.setStyleSheet("QPushButton{color:#666}")   # in the other hand
+                else:
+                    b.setStyleSheet("QPushButton{font-weight:600}")
+        h1, h2 = self.holdings()
         opps = "".join(r for r in RANKS if self.state[r] is None) or "—"
         self.preview.setText(
-            f'<span style="color:{self._TOP}">Top&nbsp; {top or "—"}</span>'
-            f'&nbsp;&nbsp;&nbsp;<span style="color:{self._BOT}">Bottom&nbsp; {bot or "—"}</span>'
+            f'<span style="color:{self._H1}">Hand 1&nbsp; <b>{h1 or "void"}</b></span>'
+            f'&nbsp;&nbsp;&nbsp;<span style="color:{self._H2}">Hand 2&nbsp; <b>{h2 or "void"}</b></span>'
             f'&nbsp;&nbsp;&nbsp;<span style="color:#888">Defenders&nbsp; {opps}</span>')
+        self.count.setText(f"Hand 1: {len(h1)}   Hand 2: {len(h2)}   "
+                           f"defenders: {13 - len(h1) - len(h2)}")
 
     def holdings(self):
-        top = "".join(r for r in RANKS if self.state[r] == "T")
-        bot = "".join(r for r in RANKS if self.state[r] == "B")
-        return top, bot
+        h1 = "".join(r for r in RANKS if self.state[r] == "1")
+        h2 = "".join(r for r in RANKS if self.state[r] == "2")
+        return h1, h2
