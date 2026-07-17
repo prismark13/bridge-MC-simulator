@@ -251,11 +251,15 @@ class MainWindow(QMainWindow):
         srow.addWidget(mb)
         srow.addStretch(1)
         sv.addLayout(srow)
-        self.suit_view = QTextBrowser()
-        self._suit_placeholder = (
-            "<p style='color:#888'>Type a suit combination above (e.g. "
-            "<b>AKxxx</b> opposite <b>Qxxx</b>) and Analyse — or <b>From my hands</b> "
-            "after a run to break down each of your suits. x = a low spot.</p>")
+        # QWebEngineView (not QTextBrowser): the suit report needs real CSS —
+        # tabular figures, aligned columns and proper spacing — which Qt's
+        # rich-text subset can't do.
+        self.suit_view = QWebEngineView()
+        self._suit_placeholder = _suit_page(
+            "<p class='hint'>Type a suit combination above — e.g. "
+            "<b>AKxxx</b> opposite <b>Qxxx</b> — and press Analyse, or use "
+            "<b>Cards…</b> to pick it. <b>From my hands</b> breaks down each suit "
+            "after a run. <code>x</code> = any low spot.</p>")
         self.suit_view.setHtml(self._suit_placeholder)
         sv.addWidget(self.suit_view, 1)
         self.tabs.addTab(suit_tab, "Suit play")
@@ -513,68 +517,59 @@ class MainWindow(QMainWindow):
             return 100.0 if (cum and k < min(cum)) else 0.0
 
         if r.get("ceiling"):
-            badge = "<span style='color:#8a6d3b;font-weight:600'>double-dummy</span>"
-            note = "best-case; the exact blind-play solve is too costly here"
+            badge = "<span class='badge b-dd'>double-dummy</span>"
+            note = "best-case — the exact blind-play solve is too costly here"
         elif r.get("exact"):
-            badge = "<span style='color:#2c7a50;font-weight:600'>exact</span>"
+            badge = "<span class='badge b-ex'>exact</span>"
             note = "best line vs best defence"
         else:
-            badge = "<span style='color:#8a6d3b;font-weight:600'>estimate ±1%</span>"
+            badge = "<span class='badge b-dd'>estimate ±1%</span>"
             note = "best line vs best defence"
 
-        top, bot = r["top"] or "<i>void</i>", r["bottom"] or "<i>void</i>"
+        def cards(s):
+            return s if s else "<span class='void'>void</span>"
+
         head = ""
         if title and title != "Best play":
-            head = f"<div style='font-weight:600;font-size:13px;margin:14px 0 2px'>{title}</div>"
+            head = f"<div class='title'>{title}</div>"
         html = (head +
-                f"<div style='font-size:16px;margin:10px 0 2px'>"
-                f"<b>{top}</b> <span style='color:#888'>opposite</span> <b>{bot}</b>"
-                f"&nbsp;&nbsp;{badge}</div>"
-                f"<div style='color:#888;font-size:12px;margin-bottom:9px'>"
-                f"defenders hold {r['missing']} · {note}</div>")
+                f"<div class='hand'>{cards(r['top'])}"
+                f"<span class='opp'>opposite</span>{cards(r['bottom'])}{badge}</div>"
+                f"<div class='meta'>defenders hold <b>{r['missing']}</b> · {note}</div>")
 
         play = r.get("play", "")
         if play:
-            html += (f"<div style='font-size:14px;margin:0 0 11px'>"
-                     f"<span style='color:#5a86c5;font-weight:600'>Play:</span> {play}</div>")
+            html += f"<div class='plan'><span class='k'>Play</span>{play}</div>"
 
-        hdr = "".join(f"<td style='text-align:right;color:#888;font-size:11px;padding-left:24px'>"
-                      f"{k} trick{'s' if k != 1 else ''}</td>" for k in cols)
-        vals = "".join(f"<td style='text-align:right;padding-left:24px;font-weight:600;"
-                       f"font-size:15px'>{pct(k):.1f}%</td>" for k in cols)
-        html += (f"<table cellspacing='0' cellpadding='0'>"
-                 f"<tr><td style='color:#888;font-size:11px'>chance of at least</td>{hdr}</tr>"
-                 f"<tr><td></td>{vals}</tr></table>")
+        hdr = "".join(f"<td class='l'>{k} trick{'s' if k != 1 else ''}</td>" for k in cols)
+        vals = "".join(f"<td class='n'>{pct(k):.1f}<span "
+                       f"style='font-size:14px;color:#8b897f'>%</span></td>" for k in cols)
+        html += (f"<div class='sec'>chance of at least</div>"
+                 f"<table class='odds'><tr>{hdr}</tr><tr>{vals}</tr></table>")
 
         # Best lines per trick target — the line that maximises 7 tricks is often
         # not the one that maximises 5, so each target gets its own ranking.
         grid = r.get("grid") or {}
         if grid:
-            hdr = "".join(f"<td style='color:#888;font-size:11px;padding:0 14px 4px 0'>"
-                          f"#{i}</td>" for i in (1, 2, 3))
+            width = max(len(v) for v in grid.values())
+            hdr = "".join(f"<th>#{i + 1}</th>" for i in range(width))
             body = ""
             for k in sorted(grid, reverse=True):
                 cells = ""
-                for i in range(3):
+                for i in range(width):
                     if i < len(grid[k]):
                         p, d = grid[k][i]
-                        col = "#dcdcdc" if i == 0 else "#9a9a9a"
-                        wt = "600" if i == 0 else "400"
-                        cells += (f"<td style='padding:2px 14px 2px 0;color:{col};"
-                                  f"font-weight:{wt};white-space:nowrap'>"
-                                  f"{d.rstrip('.')} "
-                                  f"<span style='color:#5a86c5'>{p:.1f}%</span></td>")
+                        cls = "pick" if i == 0 else "alt"
+                        cells += (f"<td class='{cls}'>{d.rstrip('.')}"
+                                  f"<span class='pct'>{p:.1f}%</span></td>")
                     else:
                         cells += "<td></td>"
-                body += (f"<tr><td style='color:#888;font-size:11px;"
-                         f"padding-right:16px;white-space:nowrap'>"
-                         f"for {k} trick{'s' if k != 1 else ''}</td>{cells}</tr>")
-            html += (f"<div style='color:#888;font-size:11px;margin:14px 0 3px'>"
-                     f"best lines by target &nbsp;<span style='color:#666'>"
-                     f"(hopeless and clearly-inferior lines omitted)</span></div>"
-                     f"<table cellspacing='0' cellpadding='0'>"
-                     f"<tr><td></td>{hdr}</tr>{body}</table>")
-        return f"<div style='margin-bottom:10px'>{html}</div>"
+                body += (f"<tr><td class='tgt'>for {k} "
+                         f"trick{'s' if k != 1 else ''}</td>{cells}</tr>")
+            html += (f"<div class='sec'>best lines by target "
+                     f"<span>— hopeless and clearly-inferior lines omitted</span></div>"
+                     f"<table class='grid'><tr><th></th>{hdr}</tr>{body}</table>")
+        return f"<div class='combo'>{html}</div>"
 
     def _pick_suit(self):
         dlg = SuitPicker(self, self.suit_top.text().strip(), self.suit_bot.text().strip())
@@ -589,15 +584,14 @@ class MainWindow(QMainWindow):
         if top or bot:              # one hand may legitimately be void
             self._start_suits([("Best play", top, bot)])
         else:
-            self.suit_view.setHtml(
-                "<p style='color:#b0243a'>Enter the suit in at least one hand — "
-                "e.g. <b>AKxxx</b> opposite <b>Qxxx</b> (the greyed text is just an "
-                "example). Leave one side blank for a void opposite.</p>"
-                "<p style='color:#888'>Or click <b>Cards…</b> to pick the suit visually.</p>")
+            self.suit_view.setHtml(_suit_page(
+                "<p class='hint'>Enter the suit in at least one hand — e.g. "
+                "<b>AKxxx</b> opposite <b>Qxxx</b>. The greyed text is only an "
+                "example, not a value. Leave one side blank for a void opposite, "
+                "or click <b>Cards…</b> to pick it.</p>"))
 
     def _start_suits(self, items):
-        self.suit_view.setHtml("<p style='color:#888'>Solving optimal play… "
-                               "(a few seconds on two-honour suits)</p>")
+        self.suit_view.setHtml(_suit_page("<p class='hint'>Solving…</p>"))
         self.suit_worker = SuitWorker(items)
         self.suit_worker.done.connect(self._render_suits)
         self.suit_worker.start()
@@ -606,10 +600,12 @@ class MainWindow(QMainWindow):
         html = ""
         for title, r, _is_opt in results:
             if "error" in r:
-                html += f"<p style='color:#b00'>{title}: {r['error']}</p>"
+                html += (f"<p class='hint' style='color:#d47b7b'>{title}: "
+                         f"{r['error']}</p>")
             else:
                 html += self._suit_html_opt(title, r)
-        self.suit_view.setHtml(html or "<p style='color:#888'>Nothing to analyse.</p>")
+        self.suit_view.setHtml(_suit_page(
+            html or "<p class='hint'>Nothing to analyse.</p>"))
 
     def _side_suits(self, result):
         if not result or not result.config:
@@ -625,14 +621,16 @@ class MainWindow(QMainWindow):
     def _suits_from_hands(self):
         combos = self._side_suits(self.last_result)
         if not combos:
-            self.suit_view.setHtml("<p style='color:#888'>Set both of your hands to "
-                                   "<b>Fixed</b> and Run first, then this breaks down each suit.</p>")
+            self.suit_view.setHtml(_suit_page(
+                "<p class='hint'>Set both of your hands to <b>Fixed</b> and Run "
+                "first, then this breaks down each suit.</p>"))
             return
         items = [(f"{sym}  {top or '—'} / {bot or '—'}", top, bot)
                  for sym, top, bot in combos if len(top) + len(bot) >= 5]
         if not items:
-            self.suit_view.setHtml("<p style='color:#888'>No long suits to analyse "
-                                   "(short suits are skipped).</p>")
+            self.suit_view.setHtml(_suit_page(
+                "<p class='hint'>No long suits to analyse (short suits are "
+                "skipped).</p>"))
             return
         self._start_suits(items)
 
@@ -723,6 +721,57 @@ class MainWindow(QMainWindow):
             self._render()
         else:
             self._append_log(f"\n[AI error: {msg}]\n")
+
+
+_SUIT_CSS = """
+*      { box-sizing:border-box }
+body   { margin:0; padding:18px 20px 24px; background:#201f1c; color:#ecebe5;
+         font:13px/1.5 "Segoe UI",system-ui,sans-serif;
+         -webkit-font-smoothing:antialiased }
+.hint  { color:#8b897f; max-width:60ch }
+code   { font-family:Consolas,monospace; color:#c9c6ba }
+.combo { margin:0 0 26px }
+.combo + .combo { border-top:1px solid #2e2c28; padding-top:22px }
+.title { font-size:11px; letter-spacing:.09em; text-transform:uppercase;
+         color:#8b897f; margin:0 0 10px }
+.hand  { font-family:Consolas,monospace; font-size:23px; letter-spacing:.06em;
+         font-weight:600; color:#f2f1ea }
+.opp   { font-family:"Segoe UI",sans-serif; font-size:12px; font-weight:400;
+         color:#77756c; letter-spacing:0; margin:0 9px }
+.void  { color:#77756c; font-style:italic; font-size:19px }
+.badge { display:inline-block; margin-left:12px; padding:2px 8px; border-radius:9px;
+         font-size:10px; font-weight:700; letter-spacing:.06em;
+         text-transform:uppercase; vertical-align:5px }
+.b-ex  { background:#20402f; color:#7fd0a3 }
+.b-dd  { background:#413418; color:#e0b366 }
+.meta  { color:#77756c; font-size:12px; margin:7px 0 0 }
+.meta b{ color:#a9a69a; font-weight:600 }
+.plan  { margin:17px 0 20px; padding:11px 14px; border-left:3px solid #5a86c5;
+         background:#25292f; border-radius:0 4px 4px 0; font-size:14px }
+.plan .k { color:#7ba3d9; font-weight:700; margin-right:7px }
+table  { border-collapse:collapse }
+.odds td { padding:0 26px 0 0; text-align:left }
+.odds .n { font-size:26px; font-weight:600; color:#f2f1ea;
+           font-variant-numeric:tabular-nums; line-height:1.15 }
+.odds .l { font-size:11px; color:#8b897f; padding-bottom:3px }
+.sec   { font-size:11px; letter-spacing:.07em; text-transform:uppercase;
+         color:#8b897f; margin:24px 0 8px }
+.sec span { text-transform:none; letter-spacing:0; color:#5f5d56 }
+.grid th { font-size:10px; font-weight:600; color:#77756c; text-align:left;
+           padding:0 20px 6px 0; letter-spacing:.06em; text-transform:uppercase }
+.grid td { padding:5px 20px 5px 0; vertical-align:baseline; white-space:nowrap }
+.grid tr + tr td { border-top:1px solid #2a2825 }
+.tgt   { color:#8b897f; font-size:12px; padding-right:22px !important }
+.pick  { color:#ecebe5 }
+.alt   { color:#8b897f }
+.pct   { font-variant-numeric:tabular-nums; font-weight:600; margin-left:7px }
+.pick .pct { color:#7ba3d9 }
+.alt  .pct { color:#6d6b64 }
+"""
+
+
+def _suit_page(body: str) -> str:
+    return f"<!doctype html><meta charset='utf-8'><style>{_SUIT_CSS}</style>{body}"
 
 
 def main():
