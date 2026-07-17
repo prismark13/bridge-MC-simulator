@@ -323,6 +323,158 @@ def describe(N, S, lh, lc, missing):
     return f"Lead the {VALRANK[lc]}."
 
 
+def _defender_branches(sv, N_, S_, wstate, active, dseat):
+    """The defender's distinct plays: run id -> ({world: card}, new wstate)."""
+    out = {}
+    for i in active:
+        e, w = wstate[i]
+        dc = e if dseat == "E" else w
+        if not dc:
+            out.setdefault(None, {})[i] = None
+            continue
+        for rid in {sv.runid[c] for c in dc}:
+            card = min(c for c in dc if sv.runid[c] == rid)
+            out.setdefault(rid, {})[i] = card
+    return out
+
+
+def _apply(wstate, plays, dseat):
+    ws = list(wstate)
+    for i, card in plays.items():
+        if card is None:
+            continue
+        e, w = ws[i]
+        ws[i] = (_rm(e, card), w) if dseat == "E" else (e, _rm(w, card))
+    return tuple(ws)
+
+
+def principal_line(top: str, bottom: str, goal: int, time_budget: float = 30.0,
+                   max_tricks: int = 5):
+    """Replay declarer's winning plan trick by trick.
+
+    Re-solving each sub-position is optimal (the information set is Markovian),
+    so greedily taking the best play at each step follows a genuinely optimal
+    strategy. The defenders are given their most likely reply (the branch holding
+    the most a-priori weight) to pick out a single principal variation.
+    Returns a list of (declarer's lead, declarer's card in the other hand)."""
+    N, S, missing, wstate, weights, sv, n = _setup(top, bottom, time_budget)
+    total = sum(weights) or 1
+    active = frozenset(range(n))
+    need = goal
+    steps = []
+    for _ in range(max_tricks):
+        if (not N and not S) or not active or need <= 0:
+            break
+        miss = set()
+        for i in active:
+            e, w = wstate[i]
+            miss |= set(e) | set(w)
+        best = None
+        for lh, hand in (("N", N), ("S", S)):
+            other = set(S if lh == "N" else N)
+            for lc in _reps(hand, other | miss):
+                sc = _score(sv._lead(N, S, wstate, active, lh, lc),
+                            weights, n, need)
+                if best is None or sc > best[0]:
+                    best = (sc, lh, lc)
+        if best is None:
+            break
+        _, lh, lc = best
+        N1, S1 = (_rm(N, lc), S) if lh == "N" else (N, _rm(S, lc))
+        _, s2, s3, s4 = (lambda o: [o, _CLOCK[o], _CLOCK[_CLOCK[o]],
+                                    _CLOCK[_CLOCK[_CLOCK[o]]]])(lh)
+        # defenders' most likely reply
+        br = _defender_branches(sv, N1, S1, wstate, active, s2)
+        rid = max(br, key=lambda r: sum(weights[i] for i in br[r]))
+        plays = br[rid]
+        ws2, act2 = _apply(wstate, plays, s2), frozenset(plays)
+        c2 = max((c for c in plays.values() if c is not None), default=None)
+        # declarer's card in the other hand — this is where a finesse happens
+        hand3 = N1 if s3 == "N" else S1
+        c3 = None
+        if hand3:
+            miss3 = set()
+            for i in act2:
+                e, w = ws2[i]
+                miss3 |= set(e) | set(w)
+            other3 = set(S1 if s3 == "N" else N1)
+            hi = max([lc] + ([c2] if c2 is not None else []))
+            bc = None
+            for cand in _reps(hand3, other3 | miss3 | {hi}):
+                sc = _score(sv._fourth(N1, S1, ws2, act2, lh, lc, s2, c2,
+                                       s3, cand, s4), weights, n, need)
+                if bc is None or sc > bc[0]:
+                    bc = (sc, cand)
+            c3 = bc[1] if bc else None
+        # record the context this trick was played in — the outstanding cards
+        # shrink as the suit is played, so a later trick must not be judged
+        # against the original missing set
+        steps.append({"lead": lc, "lead_hand": hand,
+                      "other": c3, "other_hand": hand3,
+                      "out": frozenset(miss)})
+        N2, S2 = N1, S1
+        if c3 is not None:
+            N2, S2 = (_rm(N1, c3), S1) if s3 == "N" else (N1, _rm(S1, c3))
+        br4 = _defender_branches(sv, N2, S2, ws2, act2, s4)
+        rid4 = max(br4, key=lambda r: sum(weights[i] for i in br4[r]))
+        plays4 = br4[rid4]
+        ws3, act3 = _apply(ws2, plays4, s4), frozenset(plays4)
+        c4 = max((c for c in plays4.values() if c is not None), default=None)
+        trick = {lh: lc}
+        if c2 is not None:
+            trick[s2] = c2
+        if c3 is not None:
+            trick[s3] = c3
+        if c4 is not None:
+            trick[s4] = c4
+        if max(trick, key=lambda k: trick[k]) in _NS:
+            need -= 1
+        N, S, wstate, active = N2, S2, ws3, act3
+    return steps
+
+
+def _classify(st):
+    """Name one trick of the plan, in the paper's vocabulary: cash (a card that
+    cannot lose), finesse (lead low toward a card that a higher one might beat),
+    duck (deliberately play low from both hands), else just name the card."""
+    lc, c3, out = st["lead"], st["other"], st["out"]
+    if c3 is None:
+        hi = lc
+    else:
+        hi = max(lc, c3)
+    over = [m for m in out if m > hi]
+    if not over:                                  # nothing left can beat it
+        return f"cash the {VALRANK[hi]}"
+    if c3 is not None and lc == min(st["lead_hand"]) and c3 == min(st["other_hand"]):
+        return "duck a round"
+    # A finesse needs the card to actually beat something out there; playing a
+    # spot that beats nothing is not a finesse, it is just a low card.
+    if (c3 is not None and hi == c3 and lc < c3
+            and any(m < c3 for m in out)):
+        return f"lead low and finesse the {VALRANK[c3]}"
+    return f"lead the {VALRANK[hi]}"
+
+
+def render_plan(steps):
+    """'Cash the K, then lead low and finesse the J.' Cashing spot cards at the
+    end is just running the suit, not a decision, so it is left out."""
+    out, prev = [], None
+    for st in steps:
+        d = _classify(st)
+        if d != prev:                             # collapse repeats
+            out.append(d)
+            prev = d
+    meaty = [d for d in out
+             if not (d.startswith("cash the") and d[-1] not in "AKQJT")]
+    out = meaty or out[:1]
+    if not out:
+        return ""
+    txt = out[0][0].upper() + out[0][1:]
+    if len(out) > 1:
+        txt += ", then " + ", then ".join(out[1:])
+    return txt + "."
+
+
 def suit_vec(top: str, bottom: str, time_budget: float = 30.0) -> dict:
     """Exact trick-count distribution by vector propagation, plus the real line."""
     N, S, missing, wstate, weights, sv, n = _setup(top, bottom, time_budget)
@@ -342,11 +494,15 @@ def suit_vec(top: str, bottom: str, time_budget: float = 30.0) -> dict:
     if cum:
         grid = openings_all(top, bottom, time_budget)
         lines = grid.get(max(cum), [])
-        if lines:
-            best = lines[0][0]
-            tied = [d for p, d in lines if p >= best - 0.005]
-            play = tied[0] if len(tied) == 1 else \
-                "Equally good starts: " + " / ".join(d.rstrip(".") for d in tied) + "."
+        # The headline is the actual winning PLAN replayed from the solver, not
+        # the opening card — the finesse-vs-drop decision usually comes later, so
+        # naming only the first card can be actively misleading.
+        try:
+            play = render_plan(principal_line(top, bottom, max(cum), time_budget))
+        except Timeout:
+            play = ""
+        if not play and lines:
+            play = lines[0][1]
     # hands are held sorted ascending internally; display them high-to-low
     return {"top": "".join(VALRANK[r] for r in sorted(N, reverse=True)),
             "bottom": "".join(VALRANK[r] for r in sorted(S, reverse=True)),
