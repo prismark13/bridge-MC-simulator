@@ -541,11 +541,13 @@ class MainWindow(QMainWindow):
         if play:
             html += f"<div class='plan'><span class='k'>Play</span>{play}</div>"
 
-        hdr = "".join(f"<td class='l'>{k} trick{'s' if k != 1 else ''}</td>" for k in cols)
-        vals = "".join(f"<td class='n'>{pct(k):.1f}<span "
-                       f"style='font-size:14px;color:#8b897f'>%</span></td>" for k in cols)
-        html += (f"<div class='sec'>chance of at least</div>"
-                 f"<table class='odds'><tr>{hdr}</tr><tr>{vals}</tr></table>")
+        hdr = "".join(f"<th class='num'>{k} trick{'s' if k != 1 else ''}</th>"
+                      for k in cols)
+        vals = "".join(f"<td class='num'>{pct(k):.1f}<span class='pc'>%</span></td>"
+                       for k in cols)
+        html += (f"<table class='odds'>"
+                 f"<tr><th></th>{hdr}</tr>"
+                 f"<tr><td class='rowlab'>chance of at least</td>{vals}</tr></table>")
 
         # Best lines per trick target — the line that maximises 7 tricks is often
         # not the one that maximises 5, so each target gets its own ranking.
@@ -560,7 +562,7 @@ class MainWindow(QMainWindow):
                     if i < len(grid[k]):
                         p, d = grid[k][i]
                         cls = "pick" if i == 0 else "alt"
-                        cells += (f"<td class='{cls}'>{d.rstrip('.')}"
+                        cells += (f"<td class='{cls}'>{d}"
                                   f"<span class='pct'>{p:.1f}%</span></td>")
                     else:
                         cells += "<td></td>"
@@ -725,46 +727,52 @@ class MainWindow(QMainWindow):
 
 _SUIT_CSS = """
 *      { box-sizing:border-box }
-body   { margin:0; padding:18px 20px 24px; background:#201f1c; color:#ecebe5;
-         font:13px/1.5 "Segoe UI",system-ui,sans-serif;
+body   { margin:0; padding:14px 16px 18px; background:#201f1c; color:#ecebe5;
+         font:12.5px/1.45 "Segoe UI",system-ui,sans-serif;
          -webkit-font-smoothing:antialiased }
-.hint  { color:#8b897f; max-width:60ch }
+.hint  { color:#8b897f; max-width:62ch }
 code   { font-family:Consolas,monospace; color:#c9c6ba }
-.combo { margin:0 0 26px }
-.combo + .combo { border-top:1px solid #2e2c28; padding-top:22px }
-.title { font-size:11px; letter-spacing:.09em; text-transform:uppercase;
-         color:#8b897f; margin:0 0 10px }
-.hand  { font-family:Consolas,monospace; font-size:23px; letter-spacing:.06em;
-         font-weight:600; color:#f2f1ea }
-.opp   { font-family:"Segoe UI",sans-serif; font-size:12px; font-weight:400;
-         color:#77756c; letter-spacing:0; margin:0 9px }
-.void  { color:#77756c; font-style:italic; font-size:19px }
-.badge { display:inline-block; margin-left:12px; padding:2px 8px; border-radius:9px;
-         font-size:10px; font-weight:700; letter-spacing:.06em;
-         text-transform:uppercase; vertical-align:5px }
+.combo { margin:0 0 18px }
+.combo + .combo { border-top:1px solid #2e2c28; padding-top:16px }
+.title { font-size:10px; letter-spacing:.09em; text-transform:uppercase;
+         color:#8b897f; margin:0 0 7px }
+/* one tight type scale: 10 / 12.5 / 14.5 — hierarchy from weight + alignment */
+.hand  { font-family:Consolas,monospace; font-size:14.5px; letter-spacing:.05em;
+         font-weight:700; color:#f2f1ea }
+.opp   { font-family:"Segoe UI",sans-serif; font-size:11.5px; font-weight:400;
+         color:#77756c; letter-spacing:0; margin:0 7px }
+.void  { color:#77756c; font-style:italic }
+.badge { display:inline-block; margin-left:10px; padding:1px 6px; border-radius:3px;
+         font-size:9px; font-weight:700; letter-spacing:.07em;
+         text-transform:uppercase; vertical-align:1px }
 .b-ex  { background:#20402f; color:#7fd0a3 }
 .b-dd  { background:#413418; color:#e0b366 }
-.meta  { color:#77756c; font-size:12px; margin:7px 0 0 }
+.meta  { color:#77756c; font-size:11.5px; margin:4px 0 0 }
 .meta b{ color:#a9a69a; font-weight:600 }
-.plan  { margin:17px 0 20px; padding:11px 14px; border-left:3px solid #5a86c5;
-         background:#25292f; border-radius:0 4px 4px 0; font-size:14px }
-.plan .k { color:#7ba3d9; font-weight:700; margin-right:7px }
+.plan  { margin:11px 0 14px; padding:7px 11px; border-left:2px solid #5a86c5;
+         background:#25292f; font-size:12.5px }
+.plan .k { color:#7ba3d9; font-weight:700; margin-right:8px;
+           font-size:10px; letter-spacing:.07em; text-transform:uppercase }
 table  { border-collapse:collapse }
-.odds td { padding:0 26px 0 0; text-align:left }
-.odds .n { font-size:26px; font-weight:600; color:#f2f1ea;
-           font-variant-numeric:tabular-nums; line-height:1.15 }
-.odds .l { font-size:11px; color:#8b897f; padding-bottom:3px }
-.sec   { font-size:11px; letter-spacing:.07em; text-transform:uppercase;
-         color:#8b897f; margin:24px 0 8px }
+th, td { text-align:left }
+.num   { text-align:right; font-variant-numeric:tabular-nums }
+.sec   { font-size:10px; letter-spacing:.08em; text-transform:uppercase;
+         color:#8b897f; margin:14px 0 5px }
 .sec span { text-transform:none; letter-spacing:0; color:#5f5d56 }
-.grid th { font-size:10px; font-weight:600; color:#77756c; text-align:left;
-           padding:0 20px 6px 0; letter-spacing:.06em; text-transform:uppercase }
-.grid td { padding:5px 20px 5px 0; vertical-align:baseline; white-space:nowrap }
+/* odds: label column, then one column per target — figures aligned right */
+.odds th { font-size:10px; font-weight:400; color:#8b897f; padding:0 0 3px 22px }
+.odds td { font-size:14.5px; font-weight:600; color:#f2f1ea; padding:0 0 0 22px }
+.odds .rowlab { font-size:11.5px; font-weight:400; color:#8b897f;
+                padding:0 4px 0 0 }
+.odds .pc { font-size:10.5px; color:#8b897f; font-weight:400; margin-left:1px }
+.grid th { font-size:10px; font-weight:600; color:#77756c;
+           padding:0 18px 4px 0; letter-spacing:.06em; text-transform:uppercase }
+.grid td { padding:3px 18px 3px 0; vertical-align:baseline; white-space:nowrap }
 .grid tr + tr td { border-top:1px solid #2a2825 }
-.tgt   { color:#8b897f; font-size:12px; padding-right:22px !important }
+.tgt   { color:#8b897f; padding-right:16px !important }
 .pick  { color:#ecebe5 }
-.alt   { color:#8b897f }
-.pct   { font-variant-numeric:tabular-nums; font-weight:600; margin-left:7px }
+.alt   { color:#807e75 }
+.pct   { font-variant-numeric:tabular-nums; font-weight:600; margin-left:8px }
 .pick .pct { color:#7ba3d9 }
 .alt  .pct { color:#6d6b64 }
 """

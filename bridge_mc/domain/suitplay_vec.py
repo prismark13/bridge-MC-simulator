@@ -309,18 +309,19 @@ def openings_all(top: str, bottom: str, time_budget: float = 30.0, keep: int = 3
 
 
 def describe(N, S, lh, lc, missing):
-    """Describe the opening the solver actually chose, by its ROLE — so that
-    equivalent low cards (the 4 and the 6 from the same hand) read the same and
-    don't split a tie into two spurious descriptions."""
+    """Short label for an opening, by its ROLE — so equivalent low cards (the 4
+    and the 6 from one hand) read the same and don't split a tie into two
+    spurious entries. Kept terse: these sit in a scannable table."""
     other = S if lh == "N" else N
     ms = sorted(missing)
     if not any(m > lc for m in ms):                  # nothing out beats it
-        return f"Cash the {VALRANK[lc]}."
+        return f"Cash the {VALRANK[lc]}"
     tenace = sorted((c for c in other if c >= 10), reverse=True)
-    if tenace and any(m < max(tenace) for m in ms):   # leading toward honours
-        held = "".join(VALRANK[c] for c in tenace)
-        return f"Lead low toward the {held} — finesse."
-    return f"Lead the {VALRANK[lc]}."
+    # only a genuinely low card is "low to the honours" — leading an honour is a
+    # different play entirely (an unblock or a card led to be covered)
+    if lc < 10 and tenace and any(m < max(tenace) for m in ms):
+        return "Low to the " + "".join(VALRANK[c] for c in tenace)
+    return f"Lead the {VALRANK[lc]}"
 
 
 def _defender_branches(sv, N_, S_, wstate, active, dseat):
@@ -443,6 +444,10 @@ def _classify(st):
     else:
         hi = max(lc, c3)
     over = [m for m in out if m > hi]
+    # leading an honour and beating it with a higher one from the other hand is
+    # an unblock — saying "cash the A" hides the card you must lead to get it
+    if c3 is not None and lc >= 10 and c3 > lc:
+        return f"overtake the {VALRANK[lc]} with the {VALRANK[c3]}"
     if not over:                                  # nothing left can beat it
         return f"cash the {VALRANK[hi]}"
     if c3 is not None and lc == min(st["lead_hand"]) and c3 == min(st["other_hand"]):
