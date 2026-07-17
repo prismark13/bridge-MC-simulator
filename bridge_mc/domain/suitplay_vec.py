@@ -277,14 +277,15 @@ def openings(top: str, bottom: str, goal: int, time_budget: float = 30.0):
     return out
 
 
-def openings_all(top: str, bottom: str, time_budget: float = 30.0, keep: int = 3):
+def openings_all(top: str, bottom: str, time_budget: float = 30.0, keep: int = 3,
+                 ctx=None):
     """{trick target -> [(pct, description), ...]} — the ranked options for EACH
     target, since the best line for 7 tricks need not be the best for 5.
 
     Only real choices survive: lines scoring 0 or materially worse than the best
     are dropped, as are targets every line makes anyway (nothing to decide there
     — the odds table already says 100%)."""
-    N, S, missing, wstate, weights, sv, n = _setup(top, bottom, time_budget)
+    N, S, missing, wstate, weights, sv, n = ctx or _setup(top, bottom, time_budget)
     total = sum(weights) or 1
     per_open = [(describe(N, S, lh, lc, missing), v)
                 for lh, lc, v in _opening_vecs(N, S, missing, wstate, weights, sv, n)]
@@ -349,17 +350,14 @@ def _apply(wstate, plays, dseat):
     return tuple(ws)
 
 
-def principal_line(top: str, bottom: str, goal: int, time_budget: float = 30.0,
-                   max_tricks: int = 5):
-    """Replay declarer's winning plan trick by trick.
+def _principal_from(ctx, goal, max_tricks=6):
+    """Replay declarer's plan for ``goal`` tricks, reusing an existing solver.
 
     Re-solving each sub-position is optimal (the information set is Markovian),
     so greedily taking the best play at each step follows a genuinely optimal
     strategy. The defenders are given their most likely reply (the branch holding
-    the most a-priori weight) to pick out a single principal variation.
-    Returns a list of (declarer's lead, declarer's card in the other hand)."""
-    N, S, missing, wstate, weights, sv, n = _setup(top, bottom, time_budget)
-    total = sum(weights) or 1
+    the most a-priori weight) to pick out a single principal variation."""
+    N, S, missing, wstate, weights, sv, n = ctx
     active = frozenset(range(n))
     need = goal
     steps = []
@@ -434,6 +432,27 @@ def principal_line(top: str, bottom: str, goal: int, time_budget: float = 30.0,
     return steps
 
 
+def principal_line(top: str, bottom: str, goal: int, time_budget: float = 30.0):
+    return _principal_from(_setup(top, bottom, time_budget), goal)
+
+
+def plans_all(top: str, bottom: str, cum: dict, time_budget: float = 30.0,
+              ctx=None):
+    """{target -> plan text}. The plan for 4 tricks is often NOT the plan for 3 —
+    playing for the maximum can be a 3% shot you'd never take — so every target
+    the odds table shows gets its own line. One solver is shared across targets."""
+    ctx = ctx or _setup(top, bottom, time_budget)
+    out = {}
+    for k in sorted(cum, reverse=True):
+        if cum[k] >= 99.95:
+            continue          # every line makes it — naming one would imply a choice
+        try:
+            out[k] = render_plan(_principal_from(ctx, k))
+        except Timeout:
+            break             # keep whatever we already have
+    return out
+
+
 def _classify(st):
     """Name one trick of the plan, in the paper's vocabulary: cash (a card that
     cannot lose), finesse (lead low toward a card that a higher one might beat),
@@ -452,11 +471,14 @@ def _classify(st):
         return f"cash the {VALRANK[hi]}"
     if c3 is not None and lc == min(st["lead_hand"]) and c3 == min(st["other_hand"]):
         return "duck a round"
-    # A finesse needs the card to actually beat something out there; playing a
-    # spot that beats nothing is not a finesse, it is just a low card.
-    if (c3 is not None and hi == c3 and lc < c3
-            and any(m < c3 for m in out)):
-        return f"lead low and finesse the {VALRANK[c3]}"
+    # A finesse needs the card to be a plausible winner: it must beat more of the
+    # outstanding cards than beat it. Otherwise it is just a low card — you do
+    # not "finesse the 5" with Q, T and 9 still out.
+    if c3 is not None and hi == c3 and lc < c3:
+        below = sum(1 for m in out if m < c3)
+        above = sum(1 for m in out if m > c3)
+        if below > above:
+            return f"lead low and finesse the {VALRANK[c3]}"
     return f"lead the {VALRANK[hi]}"
 
 
@@ -482,7 +504,8 @@ def render_plan(steps):
 
 def suit_vec(top: str, bottom: str, time_budget: float = 30.0) -> dict:
     """Exact trick-count distribution by vector propagation, plus the real line."""
-    N, S, missing, wstate, weights, sv, n = _setup(top, bottom, time_budget)
+    ctx = _setup(top, bottom, time_budget)
+    N, S, missing, wstate, weights, sv, n = ctx
     total = sum(weights) or 1
     vecs = sv.solve(N, S, wstate, frozenset(range(n)))
     maxt = len(N) + len(S)
@@ -495,23 +518,24 @@ def suit_vec(top: str, bottom: str, time_budget: float = 30.0) -> dict:
     # The line comes from the solver, not a heuristic. Several openings often tie
     # (the finesse-vs-drop decision comes later, not on the first card), so only
     # claim a single start when the optimal openings all mean the same thing.
-    play, lines, grid = "", [], {}
+    play, lines, grid, plans = "", [], {}, {}
     if cum:
-        grid = openings_all(top, bottom, time_budget)
-        lines = grid.get(max(cum), [])
-        # The headline is the actual winning PLAN replayed from the solver, not
-        # the opening card — the finesse-vs-drop decision usually comes later, so
-        # naming only the first card can be actively misleading.
+        # The odds are the answer and are already computed exactly; the plans and
+        # alternatives are commentary. On a slow holding let the commentary time
+        # out rather than lose the exact odds with it.
         try:
-            play = render_plan(principal_line(top, bottom, max(cum), time_budget))
+            grid = openings_all(top, bottom, time_budget, ctx=ctx)
+            lines = grid.get(max(cum), [])
+            # A plan per target — the best play for 4 tricks may be a 3% shot
+            # while the play for 3 is a different line entirely.
+            plans = plans_all(top, bottom, cum, time_budget, ctx=ctx)
+            play = plans.get(max(cum), "")
         except Timeout:
-            play = ""
-        if not play and lines:
-            play = lines[0][1]
+            pass
     # hands are held sorted ascending internally; display them high-to-low
     return {"top": "".join(VALRANK[r] for r in sorted(N, reverse=True)),
             "bottom": "".join(VALRANK[r] for r in sorted(S, reverse=True)),
             "missing": "".join(VALRANK[r] for r in sorted(missing, reverse=True)) or "—",
             "worlds": n, "strategies": len(vecs), "cum": cum,
             "max_tricks": max(cum) if cum else 0, "exact": True, "play": play,
-            "lines": lines, "grid": grid}
+            "lines": lines, "grid": grid, "plans": plans}

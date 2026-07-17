@@ -537,17 +537,21 @@ class MainWindow(QMainWindow):
                 f"<span class='opp'>opposite</span>{cards(r['bottom'])}{badge}</div>"
                 f"<div class='meta'>defenders hold <b>{r['missing']}</b> · {note}</div>")
 
-        play = r.get("play", "")
-        if play:
-            html += f"<div class='plan'><span class='k'>Play</span>{play}</div>"
-
-        hdr = "".join(f"<th class='num'>{k} trick{'s' if k != 1 else ''}</th>"
-                      for k in cols)
-        vals = "".join(f"<td class='num'>{pct(k):.1f}<span class='pc'>%</span></td>"
-                       for k in cols)
-        html += (f"<table class='odds'>"
-                 f"<tr><th></th>{hdr}</tr>"
-                 f"<tr><td class='rowlab'>chance of at least</td>{vals}</tr></table>")
+        # One table, keyed by target: the chance AND the play that achieves it.
+        # A single "Play:" headline had to pick a target silently — and it picked
+        # the maximum, which is often a 3% shot nobody would play for.
+        plans = r.get("plans") or {}
+        rows = ""
+        for k in cols:
+            p = pct(k)
+            plan = plans.get(k) or ("<span class='alt'>any line</span>"
+                                    if p >= 99.95 else "")
+            rows += (f"<tr><td class='tgt'>{k} trick{'s' if k != 1 else ''}</td>"
+                     f"<td class='num pv'>{p:.1f}<span class='pc'>%</span></td>"
+                     f"<td class='pl'>{plan}</td></tr>")
+        html += (f"<table class='need'>"
+                 f"<tr><th>if you need</th><th class='num'>chance</th>"
+                 f"<th>best play</th></tr>{rows}</table>")
 
         # Best lines per trick target — the line that maximises 7 tricks is often
         # not the one that maximises 5, so each target gets its own ranking.
@@ -759,12 +763,15 @@ th, td { text-align:left }
 .sec   { font-size:10px; letter-spacing:.08em; text-transform:uppercase;
          color:#8b897f; margin:14px 0 5px }
 .sec span { text-transform:none; letter-spacing:0; color:#5f5d56 }
-/* odds: label column, then one column per target — figures aligned right */
-.odds th { font-size:10px; font-weight:400; color:#8b897f; padding:0 0 3px 22px }
-.odds td { font-size:14.5px; font-weight:600; color:#f2f1ea; padding:0 0 0 22px }
-.odds .rowlab { font-size:11.5px; font-weight:400; color:#8b897f;
-                padding:0 4px 0 0 }
-.odds .pc { font-size:10.5px; color:#8b897f; font-weight:400; margin-left:1px }
+/* one row per target: what you need, the chance, and the play that gets it */
+.need { margin-top:4px }
+.need th { font-size:10px; font-weight:600; color:#77756c; letter-spacing:.06em;
+           text-transform:uppercase; padding:0 22px 5px 0 }
+.need td { padding:4px 22px 4px 0; vertical-align:baseline }
+.need tr + tr td { border-top:1px solid #2a2825 }
+.need .pv { font-size:14.5px; font-weight:600; color:#f2f1ea }
+.need .pc { font-size:10.5px; color:#8b897f; font-weight:400; margin-left:1px }
+.need .pl { color:#d6d4cb; padding-right:0 !important }
 .grid th { font-size:10px; font-weight:600; color:#77756c;
            padding:0 18px 4px 0; letter-spacing:.06em; text-transform:uppercase }
 .grid td { padding:3px 18px 3px 0; vertical-align:baseline; white-space:nowrap }
