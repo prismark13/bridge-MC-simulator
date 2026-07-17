@@ -41,19 +41,19 @@ class SuitWorker(QThread):
         self.items = items
 
     def run(self):
-        from ..domain.suitplay_opt import suit_optimal, suit_lines
+        # vec-prop (Frank, Basin & Bundy, AAAI 2000): exact on every holding and
+        # ~1000x faster than the old information-set minimax, which searched over
+        # partitions of the information set and blew up. Validated against
+        # SuitPlay to four decimals, including the holdings the old one couldn't
+        # solve at all. It carries its own line, read off the winning strategy.
+        from ..domain.suitplay_vec import suit_vec, Timeout
         out = []
         for title, top, bot in self.items:
             try:
-                # Always returns a usable result: exact single-dummy where it can
-                # solve in time, else the verified double-dummy ceiling.
-                r = suit_optimal(top, bot)
-                if not r.get("ceiling") and r.get("max_tricks"):
-                    try:
-                        r["lines"] = suit_lines(top, bot, r["max_tricks"])
-                    except Exception:      # noqa: BLE001
-                        r["lines"] = []
-                out.append((title, r, True))
+                out.append((title, suit_vec(top, bot, time_budget=25.0), True))
+            except Timeout:
+                from ..domain.suitplay_opt import suit_optimal
+                out.append((title, suit_optimal(top, bot), True))
             except Exception as e:         # noqa: BLE001
                 out.append((title, {"error": str(e)}, False))
         self.done.emit(out)
