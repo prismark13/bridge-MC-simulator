@@ -4,6 +4,8 @@ same styled HTML report you get in the desktop app.
 Endpoints
 ---------
 GET  /         the input form (hands, options, auction, ask)
+GET  /suit     the suit-combination calculator (its own screen)
+POST /suit/solve  solve one suit combination, return the result fragment
 POST /run      run the engine, return render_html(result)
 POST /explain  stream Claude's verdict for the last-submitted parameters
 GET  /healthz  liveness probe for the cloud platform
@@ -54,6 +56,28 @@ def auth(creds: HTTPBasicCredentials = Depends(_security)):
 # When APP_PASS is unset the dependency still runs but returns immediately; to
 # avoid forcing a login prompt in dev we swap it out for a no-op there.
 _guard = auth if os.environ.get("APP_PASS") else (lambda: None)
+
+
+@app.get("/suit", response_class=HTMLResponse)
+def suit_page(_=Depends(_guard)):
+    """The suit calculator gets its own screen: a different question, and a
+    different input — tapping cards beats typing holdings on a phone."""
+    from .suit import page
+    return page()
+
+
+@app.post("/suit/solve", response_class=HTMLResponse)
+async def suit_solve(request: Request, _=Depends(_guard)):
+    from .suit import solve_html
+    f = await _form_dict(request)
+    top, bottom = (f.get("top") or "").strip(), (f.get("bottom") or "").strip()
+    loop = asyncio.get_running_loop()
+    try:                       # keep the event loop free; cap CPU per request
+        return await asyncio.wait_for(
+            loop.run_in_executor(_pool, solve_html, top, bottom), timeout=40)
+    except asyncio.TimeoutError:
+        return ("<p class='warn'>Timed out — this is one of the slow holdings. "
+                "Try the desktop app.</p>")
 
 
 @app.get("/healthz", response_class=PlainTextResponse)
@@ -191,6 +215,10 @@ FORM_HTML = f"""<!doctype html>
   body{{margin:0;background:var(--bg);color:var(--ink);
     font:15px/1.5 system-ui,"Segoe UI",Roboto,sans-serif;padding:16px}}
   .wrap{{max-width:720px;margin:0 auto}}
+  nav{{display:flex;gap:8px;margin:0 0 14px}}
+  nav a{{flex:1;text-align:center;padding:8px;border:1px solid var(--line);
+    border-radius:8px;text-decoration:none;color:var(--muted);font-size:14px}}
+  nav a.on{{background:var(--accent);color:#fff;border-color:var(--accent);font-weight:600}}
   h1{{font-size:20px;margin:0 0 4px}} .sub{{color:var(--muted);margin:0 0 16px;font-size:13px}}
   form{{display:flex;flex-direction:column;gap:14px}}
   .seat{{border:1px solid var(--line);border-radius:10px;background:var(--card);
@@ -216,6 +244,7 @@ FORM_HTML = f"""<!doctype html>
   details summary{{cursor:pointer;color:var(--muted);font-size:13px}}
 </style></head>
 <body><div class="wrap">
+  <nav><a href="/" class="on">Simulator</a><a href="/suit">Suit play</a></nav>
   <h1>Bridge MC Simulator</h1>
   <p class="sub">Fix a hand, constrain partner, run thousands of double-dummy deals.
      Suit contracts are scored from the realistic (long-trump) declarer.</p>
