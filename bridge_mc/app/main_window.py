@@ -546,15 +546,34 @@ class MainWindow(QMainWindow):
                  f"<tr><td style='color:#888;font-size:11px'>chance of at least</td>{hdr}</tr>"
                  f"<tr><td></td>{vals}</tr></table>")
 
-        lines = r.get("lines") or []
-        if lines:
-            rows = "".join(
-                f"<tr><td style='padding:1px 18px 1px 0'>{d}</td>"
-                f"<td style='text-align:right;font-weight:600'>{v:.1f}%</td></tr>"
-                for v, d in lines)
-            html += (f"<div style='color:#888;font-size:11px;margin:13px 0 3px'>"
-                     f"if you play differently ({mt} tricks)</div>"
-                     f"<table cellspacing='0' cellpadding='0'>{rows}</table>")
+        # Best lines per trick target — the line that maximises 7 tricks is often
+        # not the one that maximises 5, so each target gets its own ranking.
+        grid = r.get("grid") or {}
+        if grid:
+            hdr = "".join(f"<td style='color:#888;font-size:11px;padding:0 14px 4px 0'>"
+                          f"#{i}</td>" for i in (1, 2, 3))
+            body = ""
+            for k in sorted(grid, reverse=True):
+                cells = ""
+                for i in range(3):
+                    if i < len(grid[k]):
+                        p, d = grid[k][i]
+                        col = "#dcdcdc" if i == 0 else "#9a9a9a"
+                        wt = "600" if i == 0 else "400"
+                        cells += (f"<td style='padding:2px 14px 2px 0;color:{col};"
+                                  f"font-weight:{wt};white-space:nowrap'>"
+                                  f"{d.rstrip('.')} "
+                                  f"<span style='color:#5a86c5'>{p:.1f}%</span></td>")
+                    else:
+                        cells += "<td></td>"
+                body += (f"<tr><td style='color:#888;font-size:11px;"
+                         f"padding-right:16px;white-space:nowrap'>"
+                         f"for {k} trick{'s' if k != 1 else ''}</td>{cells}</tr>")
+            html += (f"<div style='color:#888;font-size:11px;margin:14px 0 3px'>"
+                     f"best lines by target &nbsp;<span style='color:#666'>"
+                     f"(hopeless and clearly-inferior lines omitted)</span></div>"
+                     f"<table cellspacing='0' cellpadding='0'>"
+                     f"<tr><td></td>{hdr}</tr>{body}</table>")
         return f"<div style='margin-bottom:10px'>{html}</div>"
 
     def _pick_suit(self):

@@ -253,21 +253,59 @@ def _score(vecs, weights, n, k):
                     if v[i] is not None and v[i] >= k) for v in vecs), default=0)
 
 
-def openings(top: str, bottom: str, goal: int, time_budget: float = 30.0):
-    """Each distinct opening play ranked by its exact chance of ``goal`` tricks.
-    The best one IS the recommended line — no heuristic guessing."""
-    N, S, missing, wstate, weights, sv, n = _setup(top, bottom, time_budget)
-    total = sum(weights) or 1
+def _opening_vecs(N, S, missing, wstate, weights, sv, n):
+    """Every distinct opening play with its strategy-vector set (computed once —
+    scoring it for each trick target afterwards is nearly free)."""
     active = frozenset(range(n))
     miss = set(missing)
     out = []
     for lh, hand in (("N", N), ("S", S)):
         other = set(S if lh == "N" else N)
         for lc in _reps(hand, other | miss):
-            vecs = sv._lead(N, S, wstate, active, lh, lc)
-            out.append((100.0 * _score(vecs, weights, n, goal) / total, lh, lc))
+            out.append((lh, lc, sv._lead(N, S, wstate, active, lh, lc)))
+    return out
+
+
+def openings(top: str, bottom: str, goal: int, time_budget: float = 30.0):
+    """Each distinct opening play ranked by its exact chance of ``goal`` tricks.
+    The best one IS the recommended line — no heuristic guessing."""
+    N, S, missing, wstate, weights, sv, n = _setup(top, bottom, time_budget)
+    total = sum(weights) or 1
+    out = [(100.0 * _score(v, weights, n, goal) / total, lh, lc)
+           for lh, lc, v in _opening_vecs(N, S, missing, wstate, weights, sv, n)]
     out.sort(key=lambda x: -x[0])
     return out
+
+
+def openings_all(top: str, bottom: str, time_budget: float = 30.0, keep: int = 3):
+    """{trick target -> [(pct, description), ...]} — the ranked options for EACH
+    target, since the best line for 7 tricks need not be the best for 5.
+
+    Only real choices survive: lines scoring 0 or materially worse than the best
+    are dropped, as are targets every line makes anyway (nothing to decide there
+    — the odds table already says 100%)."""
+    N, S, missing, wstate, weights, sv, n = _setup(top, bottom, time_budget)
+    total = sum(weights) or 1
+    per_open = [(describe(N, S, lh, lc, missing), v)
+                for lh, lc, v in _opening_vecs(N, S, missing, wstate, weights, sv, n)]
+    grid = {}
+    for k in range(1, len(N) + len(S) + 1):
+        best = {}
+        for d, vecs in per_open:                # collapse equivalent openings
+            p = 100.0 * _score(vecs, weights, n, k) / total
+            if d not in best or p > best[d]:
+                best[d] = p
+        rows = sorted(((p, d) for d, p in best.items()), key=lambda x: -x[0])
+        if not rows or rows[0][0] < 0.05:
+            continue
+        topp = rows[0][0]
+        if topp >= 99.95 and rows[-1][0] >= 99.95:
+            continue                            # every line makes it — no decision
+        rows = [(p, d) for p, d in rows
+                if p >= 0.05 and p >= topp * 0.5][:keep]
+        if rows:
+            grid[k] = rows
+    return grid
 
 
 def describe(N, S, lh, lc, missing):
@@ -300,17 +338,10 @@ def suit_vec(top: str, bottom: str, time_budget: float = 30.0) -> dict:
     # The line comes from the solver, not a heuristic. Several openings often tie
     # (the finesse-vs-drop decision comes later, not on the first card), so only
     # claim a single start when the optimal openings all mean the same thing.
-    play, lines = "", []
+    play, lines, grid = "", [], {}
     if cum:
-        top_goal = max(cum)
-        raw = openings(top, bottom, top_goal, time_budget)
-        # collapse equivalent openings (same description) to their best value
-        seen = {}
-        for pct, lh, lc in raw:
-            d = describe(N, S, lh, lc, missing)
-            if d not in seen or pct > seen[d]:
-                seen[d] = pct
-        lines = sorted(((p, d) for d, p in seen.items()), key=lambda x: -x[0])
+        grid = openings_all(top, bottom, time_budget)
+        lines = grid.get(max(cum), [])
         if lines:
             best = lines[0][0]
             tied = [d for p, d in lines if p >= best - 0.005]
@@ -322,4 +353,4 @@ def suit_vec(top: str, bottom: str, time_budget: float = 30.0) -> dict:
             "missing": "".join(VALRANK[r] for r in sorted(missing, reverse=True)) or "—",
             "worlds": n, "strategies": len(vecs), "cum": cum,
             "max_tricks": max(cum) if cum else 0, "exact": True, "play": play,
-            "lines": lines}
+            "lines": lines, "grid": grid}
