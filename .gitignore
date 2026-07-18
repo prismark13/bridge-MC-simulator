@@ -29,5 +29,4 @@ apikey.txt
 # Saved reports from the Save button
 bridge-mc-*.html
 
-# generated suit-combination cache (fill via scripts/precompute_suits.py)
-bridge_mc/data/suits.db
+bridge_mc/data/precompute.log
