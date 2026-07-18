@@ -1,11 +1,11 @@
-"""Precompute exact suit-combination odds into the cache DB (bridge_mc/data).
+"""Precompute exact suit-combination results into the cache DB (bridge_mc/data).
 
 Enumerates realistic holdings by honour placement (A-K-Q-J-T-9 to declarer-N,
 declarer-S, or the defenders) and hand lengths, filling declarer's remaining
 slots with the lowest spots — the convention people use ("x" = a low card).
-Canonicalises + dedups, then solves each exactly (a big per-holding budget, so
-even the slow two-honour double-finesses get stored). Only exact results are
-cached, so re-running with a larger budget upgrades any that fell back.
+Canonicalises + dedups, then solves each with the vec-prop solver (exact on
+every holding) and stores the full result (odds + plans + line grid). A big
+per-holding budget means even the slow spot-heavy holdings complete and cache.
 
 Run:  python -m scripts.precompute_suits [budget_seconds] [max_holdings]
 It is resumable — already-cached holdings are skipped.
@@ -14,19 +14,9 @@ import sys
 import time
 from itertools import product
 
-from bridge_mc.domain.suitplay import VALRANK, parse_combo
+from bridge_mc.domain.suitplay import VALRANK
 from bridge_mc.domain import suitcache as SC
-from bridge_mc.domain.suitplay_opt import suit_optimal
-
-
-def _storable(top, bot):
-    """Only exact results are cached. The collapse path (>4 missing cards) is
-    exact just for <=1 missing honour; anything else is an estimate we won't
-    store, so skip it rather than burn the budget."""
-    _, _, missing = parse_combo(top, bot)
-    if len(missing) <= 4:
-        return True
-    return sum(1 for c in missing if c >= 10) <= 1
+from bridge_mc.domain.suitplay_vec import suit_vec, Timeout
 
 HONS = [14, 13, 12, 11, 10, 9]          # A K Q J T 9
 LOWS = [8, 7, 6, 5, 4, 3, 2]            # spot cards
@@ -58,30 +48,32 @@ def holdings(max_def=6):
 
 
 def main():
-    budget = float(sys.argv[1]) if len(sys.argv) > 1 else 120.0
+    budget = float(sys.argv[1]) if len(sys.argv) > 1 else 180.0
     cap = int(sys.argv[2]) if len(sys.argv) > 2 else 10 ** 9
     max_def = int(sys.argv[3]) if len(sys.argv) > 3 else 6
-    done = exact = ceil = 0
+    done = timed = slow = 0
     t0 = time.time()
     for top, bot in holdings(max_def):
-        if not _storable(top, bot):                 # would be an estimate, not cached
-            continue
-        if SC.get(top, bot):                        # already cached (exact)
+        if SC.get_full(top, bot):                   # already cached
             continue
         if done >= cap:
             break
         st = time.time()
-        r = suit_optimal(top, bot, time_budget=budget, use_cache=False)
-        # suit_optimal only caches exact automatically; store nothing extra here
+        try:
+            r = suit_vec(top, bot, time_budget=budget)   # caches on success
+        except Timeout:
+            timed += 1
+            print(f"[   -- ] {top or '-':8}/{bot or '-':8}  TIMEOUT "
+                  f"({time.time()-st:.0f}s)", flush=True)
+            continue
+        dt = time.time() - st
         done += 1
-        if r.get("exact"):
-            exact += 1
-        else:
-            ceil += 1
-        print(f"[{done:>5}] {top or '-':7}/{bot or '-':7}  "
-              f"{'EXACT' if r.get('exact') else 'ceiling':7} "
-              f"maxT={r.get('max_tricks')} ({time.time()-st:.1f}s)", flush=True)
-    print(f"\ndone={done} exact={exact} ceiling={ceil} in {time.time()-t0:.0f}s")
+        if dt > 3:
+            slow += 1
+        print(f"[{done:>5}] {top or '-':8}/{bot or '-':8}  maxT={r.get('max_tricks')} "
+              f"strat={r.get('strategies')} ({dt:.1f}s)", flush=True)
+    print(f"\ncached={done} timed-out={timed} slow(>3s)={slow} "
+          f"in {time.time()-t0:.0f}s")
 
 
 if __name__ == "__main__":

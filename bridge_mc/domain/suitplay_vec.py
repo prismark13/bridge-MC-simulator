@@ -502,8 +502,35 @@ def render_plan(steps):
     return txt + "."
 
 
-def suit_vec(top: str, bottom: str, time_budget: float = 30.0) -> dict:
-    """Exact trick-count distribution by vector propagation, plus the real line."""
+def _display(top, bottom, payload):
+    """Attach display fields, derived from the ACTUAL holding, to a cached (or
+    fresh) canonical-invariant payload."""
+    N, S, missing = parse_combo(top, bottom)
+    mt = payload.get("max_tricks", 0)
+    plans, grid = payload.get("plans") or {}, payload.get("grid") or {}
+    payload.update(
+        top="".join(VALRANK[r] for r in sorted(N, reverse=True)),
+        bottom="".join(VALRANK[r] for r in sorted(S, reverse=True)),
+        missing="".join(VALRANK[r] for r in sorted(missing, reverse=True)) or "—",
+        exact=True, play=plans.get(mt, ""), lines=grid.get(mt, []))
+    return payload
+
+
+def suit_vec(top: str, bottom: str, time_budget: float = 30.0,
+             use_cache: bool = True) -> dict:
+    """Exact trick-count distribution by vector propagation, plus the real line.
+    A solved holding is cached — the answer never changes — so it is instant next
+    time (and the precompute fills the slow tail offline)."""
+    if use_cache:
+        try:
+            from .suitcache import get_full
+            hit = get_full(top, bottom)
+        except Exception:      # noqa: BLE001
+            hit = None
+        if hit:
+            hit["cached"] = True
+            return _display(top, bottom, hit)
+
     ctx = _setup(top, bottom, time_budget)
     N, S, missing, wstate, weights, sv, n = ctx
     total = sum(weights) or 1
@@ -515,27 +542,24 @@ def suit_vec(top: str, bottom: str, time_budget: float = 30.0) -> dict:
         if p < 0.05:
             break
         cum[k] = p
-    # The line comes from the solver, not a heuristic. Several openings often tie
-    # (the finesse-vs-drop decision comes later, not on the first card), so only
-    # claim a single start when the optimal openings all mean the same thing.
-    play, lines, grid, plans = "", [], {}, {}
+    # The odds are the answer and are computed exactly; the plans and line grid
+    # are commentary. On a slow holding let the commentary time out rather than
+    # lose the exact odds with it — and don't cache a half-built result.
+    grid, plans, complete = {}, {}, True
     if cum:
-        # The odds are the answer and are already computed exactly; the plans and
-        # alternatives are commentary. On a slow holding let the commentary time
-        # out rather than lose the exact odds with it.
         try:
             grid = openings_all(top, bottom, time_budget, ctx=ctx)
-            lines = grid.get(max(cum), [])
-            # A plan per target — the best play for 4 tricks may be a 3% shot
-            # while the play for 3 is a different line entirely.
             plans = plans_all(top, bottom, cum, time_budget, ctx=ctx)
-            play = plans.get(max(cum), "")
         except Timeout:
+            complete = False
+
+    r = _display(top, bottom, {"worlds": n, "strategies": len(vecs), "cum": cum,
+                               "max_tricks": max(cum) if cum else 0,
+                               "plans": plans, "grid": grid})
+    if use_cache and complete:
+        try:
+            from .suitcache import put_full
+            put_full(top, bottom, r)
+        except Exception:      # noqa: BLE001
             pass
-    # hands are held sorted ascending internally; display them high-to-low
-    return {"top": "".join(VALRANK[r] for r in sorted(N, reverse=True)),
-            "bottom": "".join(VALRANK[r] for r in sorted(S, reverse=True)),
-            "missing": "".join(VALRANK[r] for r in sorted(missing, reverse=True)) or "—",
-            "worlds": n, "strategies": len(vecs), "cum": cum,
-            "max_tricks": max(cum) if cum else 0, "exact": True, "play": play,
-            "lines": lines, "grid": grid, "plans": plans}
+    return r

@@ -60,8 +60,48 @@ def _conn():
         c = sqlite3.connect(_DB)
         c.execute("CREATE TABLE IF NOT EXISTS suits ("
                   "key TEXT PRIMARY KEY, cum TEXT NOT NULL, exact INTEGER NOT NULL)")
+        c.execute("CREATE TABLE IF NOT EXISTS vec ("
+                  "key TEXT PRIMARY KEY, data TEXT NOT NULL)")
         _local.conn = c
     return c
+
+
+# --- full vec-prop results (odds + plans + line grid) -----------------------
+# Same-canon holdings share the same cards (an N/S swap at most), so a stored
+# plan — which names cards, not hands — is reusable across them. The display
+# labels (which hand, the exact spots) are re-derived from the actual holding on
+# lookup, so only the canonical-invariant payload lives in the DB.
+_FULL_FIELDS = ("cum", "plans", "grid", "max_tricks", "strategies", "worlds")
+
+
+def get_full(top: str, bottom: str):
+    try:
+        row = _conn().execute("SELECT data FROM vec WHERE key=?",
+                              (canon(top, bottom),)).fetchone()
+    except sqlite3.Error:
+        return None
+    if not row:
+        return None
+    d = json.loads(row[0])
+    d["cum"] = {int(k): v for k, v in d.get("cum", {}).items()}
+    d["plans"] = {int(k): v for k, v in d.get("plans", {}).items()}
+    d["grid"] = {int(k): [tuple(x) for x in v] for k, v in d.get("grid", {}).items()}
+    return d
+
+
+def put_full(top: str, bottom: str, result: dict):
+    keep = {k: result.get(k) for k in _FULL_FIELDS}
+    keep["cum"] = {str(k): v for k, v in (keep["cum"] or {}).items()}
+    keep["plans"] = {str(k): v for k, v in (keep["plans"] or {}).items()}
+    keep["grid"] = {str(k): [list(x) for x in v]
+                    for k, v in (keep["grid"] or {}).items()}
+    try:
+        c = _conn()
+        c.execute("INSERT OR REPLACE INTO vec(key, data) VALUES (?,?)",
+                  (canon(top, bottom), json.dumps(keep)))
+        c.commit()
+    except sqlite3.Error:
+        pass          # best-effort; a read-only fs just means no caching
 
 
 def get(top: str, bottom: str):
