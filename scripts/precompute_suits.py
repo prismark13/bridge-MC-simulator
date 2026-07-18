@@ -18,13 +18,17 @@ from bridge_mc.domain.suitplay import VALRANK
 from bridge_mc.domain import suitcache as SC
 from bridge_mc.domain.suitplay_vec import suit_vec, Timeout
 
-HONS = [14, 13, 12, 11, 10, 9]          # A K Q J T 9
-LOWS = [8, 7, 6, 5, 4, 3, 2]            # spot cards
+HONS = "AKQJT9"                         # significant cards
+NLOW = 7                                 # spot cards 8..2 available as "x"
 
 
 def holdings(max_def=6):
-    """Yield (top, bottom) representatives, deduped by canonical form.
-    ``max_def`` caps defenders' length (13 - declarer length)."""
+    """Yield (top, bottom) as honour letters plus ``x`` for the spots — exactly
+    the form a user types. Crucially, the low cards are ``x`` (declarer's spots
+    are low, defenders hold the higher missing spots), so canon(top,bottom)
+    matches what parse_combo produces for the same input. Building the spots any
+    other way enumerates *different combinations with different odds* that nobody
+    enters. Deduped by canonical form."""
     seen = set()
     for lenN in range(1, 12):
         for lenS in range(1, lenN + 1):
@@ -34,12 +38,10 @@ def holdings(max_def=6):
                 hn = [HONS[i] for i in range(len(HONS)) if hp[i] == "N"]
                 hs = [HONS[i] for i in range(len(HONS)) if hp[i] == "S"]
                 need_n, need_s = lenN - len(hn), lenS - len(hs)
-                if need_n < 0 or need_s < 0 or need_n + need_s > len(LOWS):
+                if need_n < 0 or need_s < 0 or need_n + need_s > NLOW:
                     continue
-                nlow = LOWS[:need_n]
-                slow = LOWS[need_n:need_n + need_s]
-                top = "".join(VALRANK[r] for r in hn + nlow)
-                bot = "".join(VALRANK[r] for r in hs + slow)
+                top = "".join(hn) + "x" * need_n
+                bot = "".join(hs) + "x" * need_s
                 k = SC.canon(top, bot)
                 if k in seen:
                     continue
