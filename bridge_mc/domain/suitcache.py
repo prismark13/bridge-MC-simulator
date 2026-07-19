@@ -71,7 +71,8 @@ def _conn():
 # plan — which names cards, not hands — is reusable across them. The display
 # labels (which hand, the exact spots) are re-derived from the actual holding on
 # lookup, so only the canonical-invariant payload lives in the DB.
-_FULL_FIELDS = ("cum", "plans", "grid", "max_tricks", "strategies", "worlds")
+_FULL_FIELDS = ("cum", "plans", "grid", "trees", "max_tricks", "strategies",
+                "worlds")
 
 
 def get_full(top: str, bottom: str):
@@ -86,6 +87,7 @@ def get_full(top: str, bottom: str):
     d["cum"] = {int(k): v for k, v in d.get("cum", {}).items()}
     d["plans"] = {int(k): v for k, v in d.get("plans", {}).items()}
     d["grid"] = {int(k): [tuple(x) for x in v] for k, v in d.get("grid", {}).items()}
+    d["trees"] = {int(k): v for k, v in (d.get("trees") or {}).items()}
     return d
 
 
@@ -95,6 +97,7 @@ def put_full(top: str, bottom: str, result: dict):
     keep["plans"] = {str(k): v for k, v in (keep["plans"] or {}).items()}
     keep["grid"] = {str(k): [list(x) for x in v]
                     for k, v in (keep["grid"] or {}).items()}
+    keep["trees"] = {str(k): v for k, v in (keep["trees"] or {}).items()}
     try:
         c = _conn()
         c.execute("INSERT OR REPLACE INTO vec(key, data) VALUES (?,?)",

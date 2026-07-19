@@ -541,11 +541,16 @@ class MainWindow(QMainWindow):
         # A single "Play:" headline had to pick a target silently — and it picked
         # the maximum, which is often a 3% shot nobody would play for.
         plans = r.get("plans") or {}
+        trees = r.get("trees") or {}
         rows = ""
         for k in cols:
             p = pct(k)
             plan = plans.get(k) or ("<span class='alt'>any line</span>"
                                     if p >= 99.95 else "")
+            tree = trees.get(k)
+            if tree:
+                plan += (f"<details class='drill'><summary>line</summary>"
+                         f"<div class='tree'>{_suit_tree_html(tree)}</div></details>")
             rows += (f"<tr><td class='tgt'>{k} trick{'s' if k != 1 else ''}</td>"
                      f"<td class='num pv'>{p:.1f}<span class='pc'>%</span></td>"
                      f"<td class='pl'>{plan}</td></tr>")
@@ -782,7 +787,34 @@ th, td { text-align:left }
 .pct   { font-variant-numeric:tabular-nums; font-weight:600; margin-left:8px }
 .pick .pct { color:#7ba3d9 }
 .alt  .pct { color:#6d6b64 }
+.drill { margin-top:5px }
+.drill > summary { color:#5ec48d; font-size:11.5px; cursor:pointer;
+  list-style:none; display:inline-block; padding:1px 8px; border:1px solid #2f2d29;
+  border-radius:6px }
+.drill > summary::-webkit-details-marker { display:none }
+.drill[open] > summary { margin-bottom:6px }
+.tree  { border-left:2px solid #2a2825; padding-left:10px; margin-left:2px }
+.step  { font-size:12.5px; color:#d6d4cb; padding:1px 0 }
+.ex    { margin:2px 0 2px 4px }
+.ex > summary { color:#8b897f; font-size:11.5px; cursor:pointer; font-style:italic }
+.exbody{ border-left:2px solid #2a2825; padding-left:10px; margin:2px 0 4px 4px }
 """
+
+
+def _suit_tree_html(node) -> str:
+    """The drillable plan tree as nested HTML — the main line flows, each honour
+    exception is an expandable node. Shared with the phone screen's markup."""
+    if not node:
+        return ""
+    html, cur = "", node
+    while cur:
+        html += f"<div class='step'>{cur['action']}</div>"
+        for nt in cur.get("notes") or []:
+            html += (f"<details class='ex'><summary>{nt['cond']}</summary>"
+                     f"<div class='exbody'>{_suit_tree_html(nt['node'])}</div>"
+                     f"</details>")
+        cur = cur.get("next")
+    return html
 
 
 def _suit_page(body: str) -> str:

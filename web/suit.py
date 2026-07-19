@@ -14,6 +14,22 @@ from __future__ import annotations
 RANKS = list("AKQJT98765432")
 
 
+def _render_tree(node) -> str:
+    """The plan tree as nested HTML: the main line flows top to bottom; each
+    'if the king appears' exception is a drillable <details> you can expand."""
+    if not node:
+        return ""
+    html, cur = "", node
+    while cur:
+        html += f"<div class='step'>{cur['action']}</div>"
+        for nt in cur.get("notes") or []:
+            html += (f"<details class='ex'><summary>{nt['cond']}</summary>"
+                     f"<div class='exbody'>{_render_tree(nt['node'])}</div>"
+                     f"</details>")
+        cur = cur.get("next")
+    return html
+
+
 def solve_html(top: str, bottom: str, budget: float = 20.0) -> str:
     from bridge_mc.domain.suitplay_vec import suit_vec, Timeout
     if not (top or bottom):
@@ -28,6 +44,7 @@ def solve_html(top: str, bottom: str, budget: float = 20.0) -> str:
         return f"<p class='warn'>{e}</p>"
 
     cum, plans = r["cum"], r.get("plans") or {}
+    trees = r.get("trees") or {}
     if not cum:
         return "<p class='warn'>Nothing to analyse.</p>"
     rows = ""
@@ -35,9 +52,13 @@ def solve_html(top: str, bottom: str, budget: float = 20.0) -> str:
         pct = cum[k]
         plan = plans.get(k) or ("<span class='dim'>any line</span>"
                                 if pct >= 99.95 else "<span class='dim'>—</span>")
+        tree = trees.get(k)
+        drill = (f"<details class='drill'><summary>line</summary>"
+                 f"<div class='tree'>{_render_tree(tree)}</div></details>"
+                 if tree else "")
         rows += (f"<tr><td class='t'>{k}</td>"
                  f"<td class='p'>{pct:.1f}<span class='pc'>%</span></td>"
-                 f"<td class='pl'>{plan}</td></tr>")
+                 f"<td class='pl'>{plan}{drill}</td></tr>")
     grid = r.get("grid") or {}
     alts = ""
     for k in sorted(grid, reverse=True):
@@ -118,6 +139,17 @@ SUIT_HTML = """<!doctype html>
   .need .pl{color:var(--ink)}
   .alts .t{font-weight:700;width:3.2em;color:var(--muted)}
   .alts .pl{color:var(--muted);font-size:12px}
+  .drill{margin-top:5px}
+  .drill>summary{color:var(--accent);font-size:12px;cursor:pointer;
+    list-style:none;display:inline-block;padding:2px 8px;border:1px solid var(--line);
+    border-radius:6px}
+  .drill>summary::-webkit-details-marker{display:none}
+  .drill[open]>summary{margin-bottom:6px}
+  .tree{border-left:2px solid var(--line);padding-left:10px;margin-left:2px}
+  .step{font-size:13px;padding:2px 0}
+  .ex{margin:3px 0 3px 4px}
+  .ex>summary{color:var(--muted);font-size:12px;cursor:pointer;font-style:italic}
+  .exbody{border-left:2px solid var(--line);padding-left:10px;margin:3px 0 5px 4px}
   .warn{color:#b0243a;font-size:14px}
 </style></head>
 <body><div class="wrap">

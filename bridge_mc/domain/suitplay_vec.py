@@ -350,6 +350,97 @@ def _apply(wstate, plays, dseat):
     return tuple(ws)
 
 
+def _missing(wstate, active):
+    m = set()
+    for i in active:
+        e, w = wstate[i]
+        m |= set(e) | set(w)
+    return m
+
+
+def _score_act(vecs, weights, active, need):
+    """Best strategy's weighted worlds (within ``active``) taking >= ``need``."""
+    return max((sum(weights[i] for i in active
+                    if v[i] is not None and v[i] >= need) for v in vecs),
+               default=0)
+
+
+def _won(lh, lc, s2, c2, s3, c3, s4, c4):
+    trick = {lh: lc}
+    for s, c in ((s2, c2), (s3, c3), (s4, c4)):
+        if c is not None:
+            trick[s] = c
+    return max(trick, key=lambda k: trick[k]) in _NS
+
+
+def _plan_tree(sv, N, S, wstate, active, need, weights, n, depth=0):
+    """Declarer's OPTIMAL CONDITIONAL plan for ``need`` more tricks, as a tree.
+
+    A real suit-combination line is conditional — "finesse the jack; if the king
+    appears win the ace, otherwise lead the queen" — and a single flat sequence
+    cannot say that. So we extract the strategy the solver actually found: at each
+    of declarer's choices (which card to lead, which to play third) take the play
+    that maximises the goal, and at the defender's second-hand play BRANCH on what
+    shows (keyed by equivalence run — the information declarer really has). Each
+    branch carries its own third-hand response and its own continuation, which is
+    where the "if the king appears" split comes from."""
+    if depth >= 8 or not active or need <= 0 or (not N and not S):
+        return None
+    miss = _missing(wstate, active)
+    # MAX: declarer's lead — the branch that makes the goal in the most worlds.
+    best = None
+    for lh, hand in (("N", N), ("S", S)):
+        other = set(S if lh == "N" else N)
+        for lc in _reps(hand, other | miss):
+            sc = _score_act(sv._lead(N, S, wstate, active, lh, lc),
+                            weights, active, need)
+            if best is None or sc > best[0]:
+                best = (sc, lh, lc)
+    _, lh, lc = best
+    N1, S1 = (_rm(N, lc), S) if lh == "N" else (N, _rm(S, lc))
+    s2, s3, s4 = _CLOCK[lh], _CLOCK[_CLOCK[lh]], _CLOCK[_CLOCK[_CLOCK[lh]]]
+    hand3 = N1 if s3 == "N" else S1
+    branches = []
+    for rid2, plays2 in _defender_branches(sv, N1, S1, wstate, active, s2).items():
+        ws2, act2 = _apply(wstate, plays2, s2), frozenset(plays2)
+        c2 = max((c for c in plays2.values() if c is not None), default=None)
+        # MAX: declarer's third-hand response to THIS observed second-hand card.
+        c3 = None
+        if hand3:
+            miss3 = _missing(ws2, act2)
+            other3 = set(S1 if s3 == "N" else N1)
+            hi = max([lc] + ([c2] if c2 is not None else []))
+            b3 = None
+            for cand in _reps(hand3, other3 | miss3 | {hi}):
+                sc = _score_act(sv._fourth(N1, S1, ws2, act2, lh, lc, s2, c2,
+                                           s3, cand, s4), weights, act2, need)
+                if b3 is None or sc > b3[0]:
+                    b3 = (sc, cand)
+            c3 = b3[1] if b3 else None
+        N2, S2 = N1, S1
+        if c3 is not None:
+            N2, S2 = (_rm(N1, c3), S1) if s3 == "N" else (N1, _rm(S1, c3))
+        # MIN: fourth hand plays best defence — the reply leaving declarer least.
+        br4 = _defender_branches(sv, N2, S2, ws2, act2, s4)
+        rid4 = min(br4, key=lambda r: _score_act(
+            sv.solve(*_after4(N2, S2, ws2, br4[r], s4)), weights,
+            frozenset(br4[r]), need))
+        plays4 = br4[rid4]
+        ws3, act3 = _apply(ws2, plays4, s4), frozenset(plays4)
+        c4 = max((c for c in plays4.values() if c is not None), default=None)
+        won = _won(lh, lc, s2, c2, s3, c3, s4, c4)
+        cont = _plan_tree(sv, N2, S2, ws3, act3, need - (1 if won else 0),
+                          weights, n, depth + 1)
+        branches.append({"c2": c2, "c3": c3, "won": won,
+                         "wt": sum(weights[i] for i in act2), "cont": cont})
+    return {"lc": lc, "lh": lh, "s3": s3, "out": frozenset(miss),
+            "hand3": hand3, "branches": branches}
+
+
+def _after4(N2, S2, ws2, plays4, s4):
+    return N2, S2, _apply(ws2, plays4, s4), frozenset(plays4)
+
+
 def _principal_from(ctx, goal, max_tricks=6):
     """Replay declarer's plan for ``goal`` tricks, reusing an existing solver.
 
@@ -466,7 +557,7 @@ def plans_all(top: str, bottom: str, cum: dict, time_budget: float = 30.0,
         if cum[k] >= 99.95:
             continue          # every line makes it — naming one would imply a choice
         try:
-            out[k] = render_plan(_principal_from(ctx, k))
+            out[k] = describe_plan(ctx, k)
         except Timeout:
             break             # keep whatever we already have
     return out
@@ -514,17 +605,184 @@ def render_plan(steps):
     return txt + "."
 
 
+def _lead_desc(lc, hand3, out):
+    """How declarer starts the trick, when the second-hand play will branch."""
+    if lc >= 10:
+        return f"lead the {VALRANK[lc]}"
+    tenace = sorted((c for c in hand3 if c >= 9), reverse=True)
+    if tenace and any(m < tenace[0] for m in out):
+        return "lead low toward the " + "".join(VALRANK[c] for c in tenace[:3])
+    return "lead low"
+
+
+def _resp_desc(lc, c3, out, won):
+    """Declarer's third-hand play, as a response to what second hand showed."""
+    if c3 is None:
+        return ""
+    if lc >= 10 and c3 > lc:
+        return f"overtake with the {VALRANK[c3]}"
+    if lc < c3 and c3 >= 9 and any(m > c3 for m in out):
+        return f"finesse the {VALRANK[c3]}"
+    if not any(m > c3 for m in out):
+        return f"win the {VALRANK[c3]}" if c3 >= 10 else ""
+    return f"play the {VALRANK[c3]}" if c3 >= 10 else ""
+
+
+def _combined(lc, c3, hand3, out, won):
+    """One phrase for declarer's play this trick, when second hand's card does not
+    change it: cash / finesse (led low toward a card, or an honour run past a gap)
+    / duck / a plain lead."""
+    hi = lc if c3 is None else max(lc, c3)
+    over = [m for m in out if m > hi]
+    if c3 is not None and lc >= 10 and c3 > lc:
+        return f"overtake the {VALRANK[lc]} with the {VALRANK[c3]}"
+    # finesse by leading low toward a higher card that a missing card can beat
+    if c3 is not None and lc < c3 and c3 >= 9 and any(m > c3 for m in out):
+        return f"lead low and finesse the {VALRANK[c3]}"
+    if not over:
+        return f"cash the {VALRANK[hi]}" if hi >= 10 else ""   # spots just run
+    # finesse by running an honour: you lead it meaning to let it ride, because a
+    # missing card can still beat it and you are hoping it sits favourably
+    if lc >= 9 and (c3 is None or c3 < lc) and any(m > lc for m in out):
+        return f"run the {VALRANK[lc]}"
+    if (c3 is not None and not won
+            and lc == min([lc, c3]) and lc < 9 and c3 < 9):
+        return "duck a round"
+    return f"lead the {VALRANK[hi]}" if hi >= 10 else ""
+
+
+def _join(parts):
+    return ", then ".join(p for p in parts if p)
+
+
+def _all_winners(node):
+    """A raw node whose whole subtree is just cashing established winners — no
+    finesse or duck anywhere below. Such a tail is 'draw the rest', not a
+    decision, so it is collapsed to a single leaf."""
+    if node is None:
+        return True
+    for br in node["branches"]:
+        c3, lc, out = br["c3"], node["lc"], node["out"]
+        hi = lc if c3 is None else max(lc, c3)
+        if any(m > hi for m in out):          # something can still beat us — real
+            return False
+        if not _all_winners(br["cont"]):
+            return False
+    return True
+
+
+def _cap(s):
+    return s[0].upper() + s[1:] if s else s
+
+
+def _to_display(node, depth=0):
+    """Turn the raw strategy tree into a clean, drillable display tree the way a
+    suit-combination note reads: a MAIN LINE that flows, with honour-appears cases
+    hung off it as drillable exceptions.
+
+    Node: ``{"action", "notes": [{"cond", "node"}], "next"}``. ``next`` is the
+    main continuation (defender played low — declarer stays blind, so the finesse
+    or drop shows); ``notes`` are the 'if the king appears' side lines."""
+    if node is None or depth > 10:
+        return None
+    if _all_winners(node):
+        return {"action": "Draw the rest", "notes": [], "next": None}
+    lc, hand3, out = node["lc"], node["hand3"], node["out"]
+    notes, main_pool = [], []
+    for br in node["branches"]:
+        if br["c2"] is not None and br["c2"] >= 11:      # an honour showed
+            resp = _resp_desc(lc, br["c3"], out, br["won"])
+            cont = _to_display(br["cont"], depth + 1)
+            # if declarer just follows low, the note is really about what happens
+            # next — show that directly rather than an empty "play low" line
+            sub = ({"action": _cap(resp), "notes": [], "next": cont}
+                   if resp else cont)
+            if sub and not _trivial(sub):    # skip gifts: honour drops, we claim
+                notes.append((br["c2"], sub))
+        else:
+            main_pool.append(br)
+    main = max(main_pool or node["branches"], key=lambda b: b["wt"])
+    action = _combined(lc, main["c3"], hand3, out, main["won"])
+    nxt = _to_display(main["cont"], depth + 1)
+    seen, note_list = set(), []                          # one note per honour
+    for c2, nd in sorted(notes, key=lambda x: -x[0]):
+        if c2 in seen:
+            continue
+        seen.add(c2)
+        note_list.append({"cond": f"if the {VALRANK[c2]} appears", "node": nd})
+    if not action:                    # declarer just follows low — nothing to say
+        return nxt                    # its own (trivial) exceptions carry no info
+    return {"action": _cap(action), "notes": note_list, "next": nxt}
+
+
+def _trivial(nd):
+    """A note that carries no decision — declarer just follows and cashes out.
+    An honour dropping under a winner is a gift, not a line worth spelling."""
+    if nd is None:
+        return True
+    if nd["action"] in ("", "Follow low") and not nd["notes"]:
+        return _trivial(nd["next"])
+    if nd["action"] == "Draw the rest" and not nd["notes"]:
+        return True
+    return False
+
+
+def plan_tree(ctx, goal):
+    """The optimal conditional line for ``goal`` tricks, as a drillable tree."""
+    N, S, missing, wstate, weights, sv, n = ctx
+    raw = _plan_tree(sv, N, S, wstate, frozenset(range(n)), goal, weights, n)
+    return _to_display(raw)
+
+
+def _headline(disp):
+    """One-line summary: the main line down the spine (ignoring the exceptions).
+    'Draw the rest' is just cashing winners, so it is left off the headline."""
+    parts, node, seen = [], disp, 0
+    while node is not None and seen < 8:
+        if node["action"] and node["action"] != "Draw the rest":
+            parts.append(node["action"])
+        node = node["next"]
+        seen += 1
+    if not parts:
+        return ""
+    parts = [parts[0]] + [p[0].lower() + p[1:] for p in parts[1:]]
+    txt = _join(parts)
+    return txt[0].upper() + txt[1:] + "."
+
+
+def describe_plan(ctx, goal):
+    return _headline(plan_tree(ctx, goal))
+
+
+def trees_all(cum, ctx):
+    """{target -> drillable plan tree}. Only targets that involve a real choice
+    (not the ones every line makes) get a tree, mirroring ``plans_all``."""
+    out = {}
+    for k in sorted(cum, reverse=True):
+        if cum[k] >= 99.95:
+            continue
+        try:
+            t = plan_tree(ctx, k)
+        except Timeout:
+            break
+        if t:
+            out[k] = t
+    return out
+
+
 def _display(top, bottom, payload):
     """Attach display fields, derived from the ACTUAL holding, to a cached (or
     fresh) canonical-invariant payload."""
     N, S, missing = parse_combo(top, bottom)
     mt = payload.get("max_tricks", 0)
     plans, grid = payload.get("plans") or {}, payload.get("grid") or {}
+    trees = payload.get("trees") or {}
     payload.update(
         top="".join(VALRANK[r] for r in sorted(N, reverse=True)),
         bottom="".join(VALRANK[r] for r in sorted(S, reverse=True)),
         missing="".join(VALRANK[r] for r in sorted(missing, reverse=True)) or "—",
-        exact=True, play=plans.get(mt, ""), lines=grid.get(mt, []))
+        exact=True, play=plans.get(mt, ""), lines=grid.get(mt, []),
+        tree=trees.get(mt))
     return payload
 
 
@@ -557,17 +815,18 @@ def suit_vec(top: str, bottom: str, time_budget: float = 30.0,
     # The odds are the answer and are computed exactly; the plans and line grid
     # are commentary. On a slow holding let the commentary time out rather than
     # lose the exact odds with it — and don't cache a half-built result.
-    grid, plans, complete = {}, {}, True
+    grid, plans, trees, complete = {}, {}, {}, True
     if cum:
         try:
             grid = openings_all(top, bottom, time_budget, ctx=ctx)
             plans = plans_all(top, bottom, cum, time_budget, ctx=ctx)
+            trees = trees_all(cum, ctx)
         except Timeout:
             complete = False
 
     r = _display(top, bottom, {"worlds": n, "strategies": len(vecs), "cum": cum,
                                "max_tricks": max(cum) if cum else 0,
-                               "plans": plans, "grid": grid})
+                               "plans": plans, "grid": grid, "trees": trees})
     if use_cache and complete:
         try:
             from .suitcache import put_full
