@@ -355,10 +355,32 @@ def _principal_from(ctx, goal, max_tricks=6):
 
     Re-solving each sub-position is optimal (the information set is Markovian),
     so greedily taking the best play at each step follows a genuinely optimal
-    strategy. The defenders are given their most likely reply (the branch holding
-    the most a-priori weight) to pick out a single principal variation."""
+    strategy. Crucially we trace only the worlds where declarer *achieves* the
+    goal: a 24% goal is missed in the other 76%, and following the (more likely)
+    failing defence would show declarer giving up — "duck a round" for a play
+    that is really a double finesse. Restricting to the winning worlds shows the
+    line you take WHEN it works, which is what a suit-combination note describes."""
     N, S, missing, wstate, weights, sv, n = ctx
-    active = frozenset(range(n))
+    # Describe the line the way a suit-combination note does: in ONE favourable
+    # layout. Pick the most likely world in which the best strategy makes the
+    # goal, and trace declarer's play there. With a single world declarer sees
+    # the cards (double-dummy), so a finesse is unambiguous — no tie-breaking
+    # between "cash" and "finesse", and no failing-defence "duck a round" for a
+    # play that is really a finesse.
+    vecs = sv.solve(N, S, wstate, frozenset(range(n)))
+    best_vec = max(vecs, key=lambda v: sum(
+        weights[i] for i in range(n) if v[i] is not None and v[i] >= goal))
+    winners = [i for i in range(n)
+               if best_vec[i] is not None and best_vec[i] >= goal]
+    if winners:
+        world = max(winners, key=lambda i: weights[i])
+        active = frozenset([world])
+    else:
+        active = frozenset(range(n))
+
+    def reply(branches):
+        return max(branches, key=lambda r: sum(weights[i] for i in branches[r]))
+
     need = goal
     steps = []
     for _ in range(max_tricks):
@@ -382,9 +404,8 @@ def _principal_from(ctx, goal, max_tricks=6):
         N1, S1 = (_rm(N, lc), S) if lh == "N" else (N, _rm(S, lc))
         _, s2, s3, s4 = (lambda o: [o, _CLOCK[o], _CLOCK[_CLOCK[o]],
                                     _CLOCK[_CLOCK[_CLOCK[o]]]])(lh)
-        # defenders' most likely reply
         br = _defender_branches(sv, N1, S1, wstate, active, s2)
-        rid = max(br, key=lambda r: sum(weights[i] for i in br[r]))
+        rid = reply(br)
         plays = br[rid]
         ws2, act2 = _apply(wstate, plays, s2), frozenset(plays)
         c2 = max((c for c in plays.values() if c is not None), default=None)
@@ -405,17 +426,14 @@ def _principal_from(ctx, goal, max_tricks=6):
                 if bc is None or sc > bc[0]:
                     bc = (sc, cand)
             c3 = bc[1] if bc else None
-        # record the context this trick was played in — the outstanding cards
-        # shrink as the suit is played, so a later trick must not be judged
-        # against the original missing set
-        steps.append({"lead": lc, "lead_hand": hand,
-                      "other": c3, "other_hand": hand3,
-                      "out": frozenset(miss)})
+        step = {"lead": lc, "lead_hand": hand, "other": c3,
+                "other_hand": hand3, "out": frozenset(miss)}
+        steps.append(step)
         N2, S2 = N1, S1
         if c3 is not None:
             N2, S2 = (_rm(N1, c3), S1) if s3 == "N" else (N1, _rm(S1, c3))
         br4 = _defender_branches(sv, N2, S2, ws2, act2, s4)
-        rid4 = max(br4, key=lambda r: sum(weights[i] for i in br4[r]))
+        rid4 = reply(br4)
         plays4 = br4[rid4]
         ws3, act3 = _apply(ws2, plays4, s4), frozenset(plays4)
         c4 = max((c for c in plays4.values() if c is not None), default=None)
@@ -426,7 +444,8 @@ def _principal_from(ctx, goal, max_tricks=6):
             trick[s3] = c3
         if c4 is not None:
             trick[s4] = c4
-        if max(trick, key=lambda k: trick[k]) in _NS:
+        step["won"] = max(trick, key=lambda k: trick[k]) in _NS   # declarer won?
+        if step["won"]:
             need -= 1
         N, S, wstate, active = N2, S2, ws3, act3
     return steps
@@ -458,28 +477,24 @@ def _classify(st):
     cannot lose), finesse (lead low toward a card that a higher one might beat),
     duck (deliberately play low from both hands), else just name the card."""
     lc, c3, out = st["lead"], st["other"], st["out"]
-    if c3 is None:
-        hi = lc
-    else:
-        hi = max(lc, c3)
+    hi = lc if c3 is None else max(lc, c3)
     over = [m for m in out if m > hi]
     # leading an honour and beating it with a higher one from the other hand is
     # an unblock — saying "cash the A" hides the card you must lead to get it
     if c3 is not None and lc >= 10 and c3 > lc:
         return f"overtake the {VALRANK[lc]} with the {VALRANK[c3]}"
-    if not over:                                  # nothing left can beat it
-        return f"cash the {VALRANK[hi]}"
-    if c3 is not None and lc == min(st["lead_hand"]) and c3 == min(st["other_hand"]):
+    if not over:                                  # a sure winner
+        return f"cash the {VALRANK[hi]}" if hi >= 10 else ""   # spots just run
+    # A duck DELIBERATELY LOSES a trick: low from both hands AND declarer loses
+    # it. If the defenders duck and declarer's low card wins, that is not a duck.
+    if (c3 is not None and not st.get("won", True)
+            and lc == min(st["lead_hand"]) and c3 == min(st["other_hand"])):
         return "duck a round"
-    # A finesse needs the card to be a plausible winner: it must beat more of the
-    # outstanding cards than beat it. Otherwise it is just a low card — you do
-    # not "finesse the 5" with Q, T and 9 still out.
-    if c3 is not None and hi == c3 and lc < c3:
-        below = sum(1 for m in out if m < c3)
-        above = sum(1 for m in out if m > c3)
-        if below > above:
-            return f"lead low and finesse the {VALRANK[c3]}"
-    return f"lead the {VALRANK[hi]}"
+    # A finesse leads low toward a near-honour, hoping a specific higher card
+    # sits favourably. The card must be worth it (>= 9) with something higher out.
+    if (c3 is not None and lc < c3 and c3 >= 9 and any(m > c3 for m in out)):
+        return f"lead low and finesse the {VALRANK[c3]}"
+    return f"lead the {VALRANK[hi]}" if hi >= 10 else ""   # a low card — running
 
 
 def render_plan(steps):
@@ -488,12 +503,9 @@ def render_plan(steps):
     out, prev = [], None
     for st in steps:
         d = _classify(st)
-        if d != prev:                             # collapse repeats
+        if d and d != prev:                       # skip empties, collapse repeats
             out.append(d)
             prev = d
-    meaty = [d for d in out
-             if not (d.startswith("cash the") and d[-1] not in "AKQJT")]
-    out = meaty or out[:1]
     if not out:
         return ""
     txt = out[0][0].upper() + out[0][1:]
