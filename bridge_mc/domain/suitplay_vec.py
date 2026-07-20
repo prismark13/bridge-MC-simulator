@@ -309,6 +309,31 @@ def openings_all(top: str, bottom: str, time_budget: float = 30.0, keep: int = 3
     return grid
 
 
+def equiv_all(cum, ctx):
+    """{target -> [equivalent opening descriptions]} for targets where more than
+    one genuinely different line gives the SAME best chance — so the note can say
+    'either of these', rather than implying the first is uniquely right."""
+    N, S, missing, wstate, weights, sv, n = ctx
+    total = sum(weights) or 1
+    per_open = [(describe(N, S, lh, lc, missing), v)
+                for lh, lc, v in _opening_vecs(N, S, missing, wstate, weights, sv, n)]
+    out = {}
+    for k in cum:
+        if cum[k] >= 99.95:
+            continue
+        best = {}
+        for d, vecs in per_open:
+            p = 100.0 * _score(vecs, weights, n, k) / total
+            best[d] = max(best.get(d, 0.0), p)
+        if not best:
+            continue
+        top = max(best.values())
+        ties = sorted(d for d, p in best.items() if abs(p - top) < 0.05)
+        if top >= 0.05 and len(ties) > 1:
+            out[k] = ties
+    return out
+
+
 def describe(N, S, lh, lc, missing):
     """Short label for an opening, by its ROLE — so equivalent low cards (the 4
     and the 6 from one hand) read the same and don't split a tie into two
@@ -365,6 +390,13 @@ def _score_act(vecs, weights, active, need):
                default=0)
 
 
+def _score_ev(vecs, weights, active):
+    """Best strategy's weighted EXPECTED trick count (within ``active``) — the
+    matchpoint objective: play for the average, not for a particular target."""
+    return max((sum(weights[i] * v[i] for i in active if v[i] is not None)
+                for v in vecs), default=0)
+
+
 def _won(lh, lc, s2, c2, s3, c3, s4, c4):
     trick = {lh: lc}
     for s, c in ((s2, c2), (s3, c3), (s4, c4)):
@@ -373,27 +405,33 @@ def _won(lh, lc, s2, c2, s3, c3, s4, c4):
     return max(trick, key=lambda k: trick[k]) in _NS
 
 
-def _plan_tree(sv, N, S, wstate, active, need, weights, n, depth=0):
-    """Declarer's OPTIMAL CONDITIONAL plan for ``need`` more tricks, as a tree.
+def _plan_tree(sv, N, S, wstate, active, need, weights, n, ev=False, depth=0):
+    """Declarer's OPTIMAL CONDITIONAL plan as a tree, for one of two objectives:
+    reach ``need`` tricks (IMPs / a contract), or — with ``ev=True`` — maximise the
+    expected number of tricks (matchpoints).
 
     A real suit-combination line is conditional — "finesse the jack; if the king
     appears win the ace, otherwise lead the queen" — and a single flat sequence
     cannot say that. So we extract the strategy the solver actually found: at each
     of declarer's choices (which card to lead, which to play third) take the play
-    that maximises the goal, and at the defender's second-hand play BRANCH on what
-    shows (keyed by equivalence run — the information declarer really has). Each
-    branch carries its own third-hand response and its own continuation, which is
-    where the "if the king appears" split comes from."""
-    if depth >= 8 or not active or need <= 0 or (not N and not S):
+    that maximises the objective, and at the defender's second-hand play BRANCH on
+    what shows (keyed by equivalence run — the information declarer really has).
+    Each branch carries its own third-hand response and its own continuation,
+    which is where the "if the king appears" split comes from."""
+    if depth >= 8 or not active or (not ev and need <= 0) or (not N and not S):
         return None
+
+    def _sc(vs, act):
+        return _score_ev(vs, weights, act) if ev \
+            else _score_act(vs, weights, act, need)
+
     miss = _missing(wstate, active)
-    # MAX: declarer's lead — the branch that makes the goal in the most worlds.
+    # MAX: declarer's lead — the branch that best serves the objective.
     best = None
     for lh, hand in (("N", N), ("S", S)):
         other = set(S if lh == "N" else N)
         for lc in _reps(hand, other | miss):
-            sc = _score_act(sv._lead(N, S, wstate, active, lh, lc),
-                            weights, active, need)
+            sc = _sc(sv._lead(N, S, wstate, active, lh, lc), active)
             if best is None or sc > best[0]:
                 best = (sc, lh, lc)
     _, lh, lc = best
@@ -412,8 +450,8 @@ def _plan_tree(sv, N, S, wstate, active, need, weights, n, depth=0):
             hi = max([lc] + ([c2] if c2 is not None else []))
             b3 = None
             for cand in _reps(hand3, other3 | miss3 | {hi}):
-                sc = _score_act(sv._fourth(N1, S1, ws2, act2, lh, lc, s2, c2,
-                                           s3, cand, s4), weights, act2, need)
+                sc = _sc(sv._fourth(N1, S1, ws2, act2, lh, lc, s2, c2,
+                                    s3, cand, s4), act2)
                 if b3 is None or sc > b3[0]:
                     b3 = (sc, cand)
             c3 = b3[1] if b3 else None
@@ -422,15 +460,14 @@ def _plan_tree(sv, N, S, wstate, active, need, weights, n, depth=0):
             N2, S2 = (_rm(N1, c3), S1) if s3 == "N" else (N1, _rm(S1, c3))
         # MIN: fourth hand plays best defence — the reply leaving declarer least.
         br4 = _defender_branches(sv, N2, S2, ws2, act2, s4)
-        rid4 = min(br4, key=lambda r: _score_act(
-            sv.solve(*_after4(N2, S2, ws2, br4[r], s4)), weights,
-            frozenset(br4[r]), need))
+        rid4 = min(br4, key=lambda r: _sc(
+            sv.solve(*_after4(N2, S2, ws2, br4[r], s4)), frozenset(br4[r])))
         plays4 = br4[rid4]
         ws3, act3 = _apply(ws2, plays4, s4), frozenset(plays4)
         c4 = max((c for c in plays4.values() if c is not None), default=None)
         won = _won(lh, lc, s2, c2, s3, c3, s4, c4)
         cont = _plan_tree(sv, N2, S2, ws3, act3, need - (1 if won else 0),
-                          weights, n, depth + 1)
+                          weights, n, ev, depth + 1)
         branches.append({"c2": c2, "c3": c3, "won": won,
                          "wt": sum(weights[i] for i in act2), "cont": cont})
     return {"lc": lc, "lh": lh, "s3": s3, "out": frozenset(miss),
@@ -734,6 +771,32 @@ def plan_tree(ctx, goal):
     return _to_display(raw)
 
 
+def matchpoints(ctx):
+    """The matchpoint line — maximise the expected (average) number of tricks —
+    with its average, its drillable tree, and any lines that tie it.
+
+    At matchpoints you are beating the field, not making a contract, so over- and
+    under-tricks all count: the standard suit-combination objective is the highest
+    average. It often differs from the target line (chasing the maximum can cost
+    most of a trick on average), so it earns its own row."""
+    N, S, missing, wstate, weights, sv, n = ctx
+    total = sum(weights) or 1
+    active = frozenset(range(n))
+    ops = [(describe(N, S, lh, lc, missing),
+            _score_ev(v, weights, active) / total)
+           for lh, lc, v in _opening_vecs(N, S, missing, wstate, weights, sv, n)]
+    best = {}                                  # collapse equivalent openings
+    for d, ev in ops:
+        if d not in best or ev > best[d]:
+            best[d] = ev
+    ranked = sorted(best.items(), key=lambda x: -x[1])
+    top = ranked[0][1] if ranked else 0.0
+    ties = [d for d, ev in ranked if abs(ev - top) < 5e-4]
+    raw = _plan_tree(sv, N, S, wstate, active, 0, weights, n, ev=True)
+    return {"tricks": round(top, 2), "tree": _to_display(raw),
+            "plan": _headline(_to_display(raw)), "equiv": ties}
+
+
 def _headline(disp):
     """One-line summary: the main line down the spine (ignoring the exceptions).
     'Draw the rest' is just cashing winners, so it is left off the headline."""
@@ -782,7 +845,8 @@ def _display(top, bottom, payload):
         bottom="".join(VALRANK[r] for r in sorted(S, reverse=True)),
         missing="".join(VALRANK[r] for r in sorted(missing, reverse=True)) or "—",
         exact=True, play=plans.get(mt, ""), lines=grid.get(mt, []),
-        tree=trees.get(mt))
+        tree=trees.get(mt), equiv=payload.get("equiv") or {},
+        mp=payload.get("mp"))
     return payload
 
 
@@ -815,18 +879,21 @@ def suit_vec(top: str, bottom: str, time_budget: float = 30.0,
     # The odds are the answer and are computed exactly; the plans and line grid
     # are commentary. On a slow holding let the commentary time out rather than
     # lose the exact odds with it — and don't cache a half-built result.
-    grid, plans, trees, complete = {}, {}, {}, True
+    grid, plans, trees, equiv, mp, complete = {}, {}, {}, {}, None, True
     if cum:
         try:
             grid = openings_all(top, bottom, time_budget, ctx=ctx)
             plans = plans_all(top, bottom, cum, time_budget, ctx=ctx)
             trees = trees_all(cum, ctx)
+            equiv = equiv_all(cum, ctx)
+            mp = matchpoints(ctx)
         except Timeout:
             complete = False
 
     r = _display(top, bottom, {"worlds": n, "strategies": len(vecs), "cum": cum,
                                "max_tricks": max(cum) if cum else 0,
-                               "plans": plans, "grid": grid, "trees": trees})
+                               "plans": plans, "grid": grid, "trees": trees,
+                               "equiv": equiv, "mp": mp})
     if use_cache and complete:
         try:
             from .suitcache import put_full

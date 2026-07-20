@@ -59,14 +59,36 @@ def solve_html(top: str, bottom: str, budget: float = 20.0) -> str:
         rows += (f"<tr><td class='t'>{k}</td>"
                  f"<td class='p'>{pct:.1f}<span class='pc'>%</span></td>"
                  f"<td class='pl'>{plan}{drill}</td></tr>")
+    # Matchpoints — maximise the average tricks (a different question).
+    mp = r.get("mp")
+    mp_block = ""
+    if mp and mp.get("tree"):
+        eq = mp.get("equiv") or []
+        eqnote = (f"<div class='eqnote'>equivalent: {' = '.join(eq)}</div>"
+                  if len(eq) > 1 else "")
+        drill = (f"<details class='drill'><summary>line</summary>"
+                 f"<div class='tree'>{_render_tree(mp['tree'])}</div></details>")
+        mp_block = (f"<div class='sec'>matchpoints — play for the average</div>"
+                    f"<table class='need'><tr>"
+                    f"<td class='t'>&asymp;{mp['tricks']:.2f}</td>"
+                    f"<td class='pl' colspan='2'>{mp.get('plan','')}"
+                    f"{eqnote}{drill}</td></tr></table>")
+
     grid = r.get("grid") or {}
     alts = ""
     for k in sorted(grid, reverse=True):
-        opts = " · ".join(f"{d} <b>{p:.1f}%</b>" for p, d in grid[k])
-        alts += f"<tr><td class='t'>{k}</td><td class='pl'>{opts}</td></tr>"
+        top_p = grid[k][0][0] if grid[k] else 0
+        parts = []
+        for i, (p, d) in enumerate(grid[k]):
+            tied = i > 0 and abs(p - top_p) < 0.05
+            mark = "<span class='eq'>=</span> " if tied else ""
+            parts.append(f"{mark}{d} <b>{p:.1f}%</b>")
+        alts += (f"<tr><td class='t'>{k}</td>"
+                 f"<td class='pl'>{' · '.join(parts)}</td></tr>")
     alt_block = ""
     if alts:
-        alt_block = (f"<div class='sec'>other lines</div>"
+        alt_block = (f"<div class='sec'>best lines by target "
+                     f"<span class='dim'>(= equally good)</span></div>"
                      f"<table class='alts'>{alts}</table>")
     return (f"<div class='res'>"
             f"<div class='holding'>{top or '<i>void</i>'}"
@@ -76,7 +98,7 @@ def solve_html(top: str, bottom: str, budget: float = 20.0) -> str:
             f"<div class='sec'>if you need</div>"
             f"<table class='need'>"
             f"<tr><th>tricks</th><th>chance</th><th>best play</th></tr>{rows}</table>"
-            f"{alt_block}</div>")
+            f"{mp_block}{alt_block}</div>")
 
 
 def _rank_row(hand: str) -> str:
@@ -139,6 +161,8 @@ SUIT_HTML = """<!doctype html>
   .need .pl{color:var(--ink)}
   .alts .t{font-weight:700;width:3.2em;color:var(--muted)}
   .alts .pl{color:var(--muted);font-size:12px}
+  .eq{color:var(--accent);font-weight:800}
+  .eqnote{color:var(--muted);font-style:italic;font-size:12px;margin-top:3px}
   .drill{margin-top:5px}
   .drill>summary{color:var(--accent);font-size:12px;cursor:pointer;
     list-style:none;display:inline-block;padding:2px 8px;border:1px solid var(--line);

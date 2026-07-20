@@ -558,6 +558,22 @@ class MainWindow(QMainWindow):
                  f"<tr><th>if you need</th><th class='num'>chance</th>"
                  f"<th>best play</th></tr>{rows}</table>")
 
+        # Matchpoints — the line that maximises the AVERAGE tricks, a different
+        # question from making a target. Only shown when it is a real choice.
+        mp = r.get("mp")
+        if mp and mp.get("tree"):
+            eq = mp.get("equiv") or []
+            eqnote = (f"<div class='eqnote'>equivalent: "
+                      f"{' &nbsp;=&nbsp; '.join(eq)}</div>" if len(eq) > 1 else "")
+            drill = (f"<details class='drill'><summary>line</summary>"
+                     f"<div class='tree'>{_suit_tree_html(mp['tree'])}</div></details>")
+            html += (f"<div class='sec'>matchpoints "
+                     f"<span>— play for the average</span></div>"
+                     f"<table class='need'><tr>"
+                     f"<td class='tgt'>≈&nbsp;{mp['tricks']:.2f} tricks</td>"
+                     f"<td class='pl'>{mp.get('plan','')}{eqnote}{drill}</td>"
+                     f"</tr></table>")
+
         # Best lines per trick target — the line that maximises 7 tricks is often
         # not the one that maximises 5, so each target gets its own ranking.
         grid = r.get("grid") or {}
@@ -567,18 +583,22 @@ class MainWindow(QMainWindow):
             body = ""
             for k in sorted(grid, reverse=True):
                 cells = ""
+                top = grid[k][0][0] if grid[k] else 0
                 for i in range(width):
                     if i < len(grid[k]):
                         p, d = grid[k][i]
-                        cls = "pick" if i == 0 else "alt"
-                        cells += (f"<td class='{cls}'>{d}"
+                        tied = i > 0 and abs(p - top) < 0.05   # equal to the best
+                        cls = "pick" if i == 0 else ("tied" if tied else "alt")
+                        eqmark = "<span class='eq'>=</span>" if tied else ""
+                        cells += (f"<td class='{cls}'>{eqmark}{d}"
                                   f"<span class='pct'>{p:.1f}%</span></td>")
                     else:
                         cells += "<td></td>"
                 body += (f"<tr><td class='tgt'>for {k} "
                          f"trick{'s' if k != 1 else ''}</td>{cells}</tr>")
             html += (f"<div class='sec'>best lines by target "
-                     f"<span>— hopeless and clearly-inferior lines omitted</span></div>"
+                     f"<span>— <b>=</b> marks an equally-good line; hopeless and "
+                     f"clearly-inferior ones omitted</span></div>"
                      f"<table class='grid'><tr><th></th>{hdr}</tr>{body}</table>")
         return f"<div class='combo'>{html}</div>"
 
@@ -787,6 +807,11 @@ th, td { text-align:left }
 .pct   { font-variant-numeric:tabular-nums; font-weight:600; margin-left:8px }
 .pick .pct { color:#7ba3d9 }
 .alt  .pct { color:#6d6b64 }
+.tied  { color:#cbd8c9 }
+.tied .pct { color:#7fb98f }
+.eq    { color:#5ec48d; font-weight:700; margin-right:5px }
+.eqnote{ color:#8b897f; font-size:11.5px; margin-top:4px }
+.eqnote { font-style:italic }
 .drill { margin-top:5px }
 .drill > summary { color:#5ec48d; font-size:11.5px; cursor:pointer;
   list-style:none; display:inline-block; padding:1px 8px; border:1px solid #2f2d29;
