@@ -275,7 +275,7 @@ def _runs(missing, decl):
     return runs
 
 
-def _worlds(N, S, missing):
+def _worlds(N, S, missing, vac=(13, 13)):
     """Distinct defender layouts after collapsing interchangeable low cards.
 
     Instead of 2^m raw splits, one per (per-run count) choice: a run of length L
@@ -283,13 +283,21 @@ def _worlds(N, S, missing):
     merged with their a-priori weight summed. This is SOUND — unlike collapsing
     honour layouts — because a run's cards can never win a trick apart from each
     other, so merging them removes no defensive choice. World count is
-    prod(len(run)+1), which stays small when few honours are missing."""
+    prod(len(run)+1), which stays small when few honours are missing.
+
+    ``vac=(vE, vW)`` are the defenders' vacant spaces — unknown cards in each hand
+    (default 13 each = no outside information). A world giving West ``w`` of the m
+    missing cards has a-priori weight C(vE+vW-m, vW-w): the ways to deal the other
+    unknown cards consistently. Fewer vacant spaces on a side make that side's long
+    holdings less likely — the standard way to fold in the bidding."""
     from itertools import product
+    vE, vW = vac
+    tot = vE + vW
     decl = set(N) | set(S)
     m = len(missing)
     runs = _runs(missing, decl)
     if not runs:
-        return ((tuple(), tuple(), math.comb(26, 13)),)
+        return ((tuple(), tuple(), math.comb(tot, vW)),)
     out = []
     for counts in product(*[range(len(r) + 1) for r in runs]):
         eset, wset, mult = [], [], 1
@@ -297,7 +305,10 @@ def _worlds(N, S, missing):
             wset += run[len(run) - w:]
             eset += run[:len(run) - w]
             mult *= math.comb(len(run), w)
-        wgt = mult * math.comb(26 - m, 13 - len(wset))
+        wc, ec = len(wset), len(eset)
+        if wc > vW or ec > vE:               # impossible: not enough room this side
+            continue
+        wgt = mult * math.comb(tot - m, vW - wc)
         out.append((tuple(sorted(eset)), tuple(sorted(wset)), wgt))
     return tuple(out)
 

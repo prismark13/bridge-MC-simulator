@@ -274,7 +274,24 @@ class MainWindow(QMainWindow):
         self.suit_start.addItem("bottom", "S")
         self.suit_start.setMaximumWidth(90)
         erow.addWidget(self.suit_start)
-        for w in (self.suit_eN, self.suit_eS):
+
+        # Vacant spaces — the defenders' unknown-card counts, to skew the odds
+        # (and the finesse direction) from the bidding. 13 each = no information.
+        erow.addSpacing(14)
+        erow.addWidget(QLabel("Vacant W"))
+
+        def _vspin():
+            s = QSpinBox(); s.setRange(0, 13); s.setValue(13)
+            s.setMaximumWidth(50)
+            s.setToolTip("Vacant spaces (unknown cards) in this defender's hand; "
+                         "13 = no information. West is finessed when you lead from "
+                         "the bottom hand.")
+            return s
+        self.suit_vW = _vspin(); erow.addWidget(self.suit_vW)
+        erow.addWidget(QLabel("E"))
+        self.suit_vE = _vspin(); erow.addWidget(self.suit_vE)
+
+        for w in (self.suit_eN, self.suit_eS, self.suit_vW, self.suit_vE):
             w.valueChanged.connect(self._reanalyse_suit)
         self.suit_start.currentIndexChanged.connect(self._reanalyse_suit)
         erow.addStretch(1)
@@ -664,25 +681,37 @@ class MainWindow(QMainWindow):
         return (big if eN < 0 else eN, big if eS < 0 else eS), \
             self.suit_start.currentData()
 
+    def _suit_vac(self):
+        """Read the vacant-space controls as (vW, vE), or None when both are 13
+        (no information — the normal path)."""
+        vW, vE = self.suit_vW.value(), self.suit_vE.value()
+        return None if vW == 13 and vE == 13 else (vW, vE)
+
     def _start_suits(self, items):
         self.suit_view.setHtml(_suit_page("<p class='hint'>Solving…</p>"))
         entries, start = self._suit_entries()
-        self.suit_worker = SuitWorker(items, entries=entries, start=start)
+        self.suit_worker = SuitWorker(items, entries=entries, start=start,
+                                      vac=self._suit_vac())
         self.suit_worker.done.connect(self._render_suits)
         self.suit_worker.start()
 
     def _render_suits(self, results):
         html = ""
         entries, start = self._suit_entries()
+        vac = self._suit_vac()
+        notes = []
         if entries is not None:
             eN, eS = entries
             fmt = lambda v: "∞" if v >= 99 else str(v)
             side = {"F": "either hand", "N": "the top hand",
                     "S": "the bottom hand"}[start]
-            html += (f"<div class='ent'>Entry-limited — outside entries: "
-                     f"top <b>{fmt(eN)}</b>, bottom <b>{fmt(eS)}</b>; on lead in "
-                     f"{side}. Odds and lines account for not being able to repeat "
-                     f"a lead you can't get back for.</div>")
+            notes.append(f"outside entries top <b>{fmt(eN)}</b>, bottom "
+                         f"<b>{fmt(eS)}</b>, on lead in {side}")
+        if vac is not None:
+            notes.append(f"vacant spaces West <b>{vac[0]}</b>, East <b>{vac[1]}</b>")
+        if notes:
+            html += (f"<div class='ent'>Constrained — {'; '.join(notes)}. "
+                     f"Odds and lines account for this.</div>")
         for title, r, _is_opt in results:
             if "error" in r:
                 html += (f"<p class='hint' style='color:#d47b7b'>{title}: "

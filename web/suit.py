@@ -31,26 +31,30 @@ def _render_tree(node) -> str:
 
 
 def solve_html(top: str, bottom: str, budget: float = 20.0,
-               entries=None, start: str = "F") -> str:
+               entries=None, start: str = "F", vac=None) -> str:
     from bridge_mc.domain.suitplay_vec import suit_vec, Timeout
     if not (top or bottom):
         return ("<p class='warn'>Tap some cards into a hand first — leave the "
                 "other empty for a void opposite.</p>")
     try:
-        r = suit_vec(top, bottom, time_budget=budget, entries=entries, start=start)
+        r = suit_vec(top, bottom, time_budget=budget, entries=entries,
+                     start=start, vac=vac)
     except Timeout:
         return ("<p class='warn'>This holding is one of the slow ones and timed "
                 "out. Try it on the desktop app, which allows longer.</p>")
     except Exception as e:                                   # noqa: BLE001
         return f"<p class='warn'>{e}</p>"
 
-    ent_banner = ""
+    notes = []
     if entries is not None:
         eN, eS = entries
         fmt = lambda v: "&infin;" if v >= 99 else str(v)
         side = {"F": "either hand", "N": "top", "S": "bottom"}.get(start, "either")
-        ent_banner = (f"<div class='ent'>Entry-limited — top {fmt(eN)}, "
-                      f"bottom {fmt(eS)}; on lead in {side}.</div>")
+        notes.append(f"entries top {fmt(eN)}, bottom {fmt(eS)}, on lead {side}")
+    if vac is not None:
+        notes.append(f"vacant spaces W {vac[0]}, E {vac[1]}")
+    ent_banner = f"<div class='ent'>Constrained — {'; '.join(notes)}.</div>" \
+        if notes else ""
 
     cum, plans = r["cum"], r.get("plans") or {}
     trees = r.get("trees") or {}
@@ -215,7 +219,7 @@ SUIT_HTML = """<!doctype html>
   </div>
 
   <details class="opts">
-    <summary>Entry limits (optional)</summary>
+    <summary>Entries &amp; vacant spaces (optional)</summary>
     <div class="entrow">
       <span>Outside entries —</span>
       <label>Hand 1 <input id="eN" type="number" min="0" max="13" placeholder="&#8734;"></label>
@@ -227,6 +231,12 @@ SUIT_HTML = """<!doctype html>
           <option value="S">Hand 2</option>
         </select>
       </label>
+    </div>
+    <div class="entrow">
+      <span>Vacant spaces —</span>
+      <label>West <input id="vW" type="number" min="0" max="13" placeholder="13"></label>
+      <label>East <input id="vE" type="number" min="0" max="13" placeholder="13"></label>
+      <span class="dim">(West is finessed when you lead from Hand 2)</span>
     </div>
   </details>
 
@@ -276,6 +286,10 @@ document.getElementById('go').addEventListener('click', async () => {
   if (eN !== '') fd.append('eN', eN);
   if (eS !== '') fd.append('eS', eS);
   fd.append('start', document.getElementById('start').value);
+  const vW = document.getElementById('vW').value.trim();
+  const vE = document.getElementById('vE').value.trim();
+  if (vW !== '') fd.append('vW', vW);
+  if (vE !== '') fd.append('vE', vE);
   const r = await fetch('/suit/solve', {method:'POST', body:fd});
   out.innerHTML = await r.text(); busy.textContent = '';
   out.scrollIntoView({behavior:'smooth', block:'nearest'});

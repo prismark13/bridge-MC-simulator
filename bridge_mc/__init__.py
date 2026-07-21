@@ -9,4 +9,4 @@ Layered so the domain + engine carry no UI dependency:
     app/      PySide6 GUI adapter                             (depends: all of the above)
     cli.py    headless entry point                           (depends: engine, report)
 """
-__version__ = "0.12.0"
+__version__ = "0.13.0"

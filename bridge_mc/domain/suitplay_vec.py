@@ -258,15 +258,18 @@ class _Solver:
         return _pareto(out)
 
 
-def _setup(top, bottom, time_budget, entries=None, start="F"):
+def _setup(top, bottom, time_budget, entries=None, start="F", vac=None):
     """Build the shared solver context. ``entries=(eN, eS)`` turns on the entry
     model — outside entries to the top (N) and bottom (S) hands — and ``start`` is
-    the hand declarer is on lead in ('N'/'S', or 'F' = either). Default (None) is
-    unlimited entries, i.e. the classic result."""
+    the hand declarer is on lead in ('N'/'S', or 'F' = either). ``vac=(vW, vE)``
+    sets the defenders' vacant spaces (West, East) to skew the odds from the
+    bidding; default (None) is unlimited entries and 13/13 vacant spaces — the
+    classic result."""
     from .suitplay_opt import _worlds, _runs
     N, S, missing = parse_combo(top, bottom)
     N, S = tuple(sorted(N)), tuple(sorted(S))
-    worlds = _worlds(N, S, missing)
+    # _worlds takes (vE, vW); the caller gives (vW, vE) — West first, as it reads.
+    worlds = _worlds(N, S, missing, (vac[1], vac[0]) if vac else (13, 13))
     n = len(worlds)
     wstate = tuple((e, w) for e, w, _ in worlds)
     weights = [wt for _, _, wt in worlds]
@@ -924,15 +927,18 @@ def _display(top, bottom, payload):
 
 
 def suit_vec(top: str, bottom: str, time_budget: float = 30.0,
-             use_cache: bool = True, entries=None, start: str = "F") -> dict:
+             use_cache: bool = True, entries=None, start: str = "F",
+             vac=None) -> dict:
     """Exact trick-count distribution by vector propagation, plus the real line.
     A solved holding is cached — the answer never changes — so it is instant next
     time (and the precompute fills the slow tail offline).
 
     ``entries=(eN, eS)`` constrains outside entries to the top (N) and bottom (S)
-    hands (``start`` = the hand on lead, 'N'/'S'/'F'). Entry-limited solves are
-    NOT cached — the cache holds the unlimited-entry answer only."""
-    if use_cache and entries is None:
+    hands (``start`` = the hand on lead, 'N'/'S'/'F'). ``vac=(vW, vE)`` sets the
+    defenders' vacant spaces to skew the odds from the bidding. Either constraint
+    is NOT cached — the cache holds the plain unlimited/13-13 answer only."""
+    custom = entries is not None or vac is not None
+    if use_cache and not custom:
         try:
             from .suitcache import get_full
             hit = get_full(top, bottom)
@@ -942,7 +948,7 @@ def suit_vec(top: str, bottom: str, time_budget: float = 30.0,
             hit["cached"] = True
             return _display(top, bottom, hit)
 
-    ctx = _setup(top, bottom, time_budget, entries=entries, start=start)
+    ctx = _setup(top, bottom, time_budget, entries=entries, start=start, vac=vac)
     N, S, missing, wstate, weights, sv, n = ctx
     total = sum(weights) or 1
     vecs = sv.solve(N, S, wstate, frozenset(range(n)), *sv.e0)
@@ -971,7 +977,7 @@ def suit_vec(top: str, bottom: str, time_budget: float = 30.0,
                                "max_tricks": max(cum) if cum else 0,
                                "plans": plans, "grid": grid, "trees": trees,
                                "equiv": equiv, "mp": mp})
-    if use_cache and complete and entries is None:
+    if use_cache and complete and not custom:
         try:
             from .suitcache import put_full
             put_full(top, bottom, r)
