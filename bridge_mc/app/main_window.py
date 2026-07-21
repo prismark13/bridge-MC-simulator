@@ -6,7 +6,7 @@ import sys
 import tempfile
 import webbrowser
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QTextCursor
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import (
@@ -291,9 +291,19 @@ class MainWindow(QMainWindow):
         erow.addWidget(QLabel("E"))
         self.suit_vE = _vspin(); erow.addWidget(self.suit_vE)
 
+        # Re-solve when a limit changes, but DEBOUNCED: a spinbox drag fires
+        # valueChanged on every step, and each solve reloads the (heavy) web view.
+        # Coalesce a burst into one solve once the user pauses.
+        self._suit_debounce = QTimer(self)
+        self._suit_debounce.setSingleShot(True)
+        self._suit_debounce.setInterval(350)
+        self._suit_debounce.timeout.connect(self._reanalyse_suit)
+        # NB: swallow the signal's int arg — QTimer.start(int) would otherwise
+        # reset the interval to the spinbox value instead of debouncing.
+        kick = lambda *_: self._suit_debounce.start()
         for w in (self.suit_eN, self.suit_eS, self.suit_vW, self.suit_vE):
-            w.valueChanged.connect(self._reanalyse_suit)
-        self.suit_start.currentIndexChanged.connect(self._reanalyse_suit)
+            w.valueChanged.connect(kick)
+        self.suit_start.currentIndexChanged.connect(kick)
         erow.addStretch(1)
         sv.addLayout(erow)
         # QWebEngineView (not QTextBrowser): the suit report needs real CSS —
