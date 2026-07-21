@@ -30,18 +30,27 @@ def _render_tree(node) -> str:
     return html
 
 
-def solve_html(top: str, bottom: str, budget: float = 20.0) -> str:
+def solve_html(top: str, bottom: str, budget: float = 20.0,
+               entries=None, start: str = "F") -> str:
     from bridge_mc.domain.suitplay_vec import suit_vec, Timeout
     if not (top or bottom):
         return ("<p class='warn'>Tap some cards into a hand first — leave the "
                 "other empty for a void opposite.</p>")
     try:
-        r = suit_vec(top, bottom, time_budget=budget)
+        r = suit_vec(top, bottom, time_budget=budget, entries=entries, start=start)
     except Timeout:
         return ("<p class='warn'>This holding is one of the slow ones and timed "
                 "out. Try it on the desktop app, which allows longer.</p>")
     except Exception as e:                                   # noqa: BLE001
         return f"<p class='warn'>{e}</p>"
+
+    ent_banner = ""
+    if entries is not None:
+        eN, eS = entries
+        fmt = lambda v: "&infin;" if v >= 99 else str(v)
+        side = {"F": "either hand", "N": "top", "S": "bottom"}.get(start, "either")
+        ent_banner = (f"<div class='ent'>Entry-limited — top {fmt(eN)}, "
+                      f"bottom {fmt(eS)}; on lead in {side}.</div>")
 
     cum, plans = r["cum"], r.get("plans") or {}
     trees = r.get("trees") or {}
@@ -90,7 +99,7 @@ def solve_html(top: str, bottom: str, budget: float = 20.0) -> str:
         alt_block = (f"<div class='sec'>best lines by target "
                      f"<span class='dim'>(= equally good)</span></div>"
                      f"<table class='alts'>{alts}</table>")
-    return (f"<div class='res'>"
+    return (f"<div class='res'>{ent_banner}"
             f"<div class='holding'>{top or '<i>void</i>'}"
             f"<span class='vs'>opposite</span>{bottom or '<i>void</i>'}</div>"
             f"<div class='dim sml'>defenders hold <b>{r['missing']}</b> · "
@@ -163,6 +172,19 @@ SUIT_HTML = """<!doctype html>
   .alts .pl{color:var(--muted);font-size:12px}
   .eq{color:var(--accent);font-weight:800}
   .eqnote{color:var(--muted);font-style:italic;font-size:12px;margin-top:3px}
+  .ent{background:var(--felt-soft,#1c2a22);border:1px solid var(--line);
+    border-radius:8px;padding:7px 10px;margin-bottom:10px;font-size:12px;
+    color:var(--muted)}
+  details.opts{margin:0 0 10px}
+  details.opts>summary{color:var(--muted);font-size:13px;cursor:pointer;
+    list-style:none;padding:6px 0}
+  details.opts>summary::-webkit-details-marker{display:none}
+  .entrow{display:flex;gap:10px;align-items:center;flex-wrap:wrap;
+    padding:8px 0 2px;font-size:13px;color:var(--muted)}
+  .entrow input{width:52px;padding:6px;border:1px solid var(--line);border-radius:6px;
+    background:var(--bg);color:var(--ink);font:inherit;text-align:center}
+  .entrow select{padding:6px;border:1px solid var(--line);border-radius:6px;
+    background:var(--bg);color:var(--ink);font:inherit}
   .drill{margin-top:5px}
   .drill>summary{color:var(--accent);font-size:12px;cursor:pointer;
     list-style:none;display:inline-block;padding:2px 8px;border:1px solid var(--line);
@@ -191,6 +213,22 @@ SUIT_HTML = """<!doctype html>
     <div class="row" id="r2">__ROW2__</div>
     <div class="prev" id="prev"></div>
   </div>
+
+  <details class="opts">
+    <summary>Entry limits (optional)</summary>
+    <div class="entrow">
+      <span>Outside entries —</span>
+      <label>Hand 1 <input id="eN" type="number" min="0" max="13" placeholder="&#8734;"></label>
+      <label>Hand 2 <input id="eS" type="number" min="0" max="13" placeholder="&#8734;"></label>
+      <label>on lead
+        <select id="start">
+          <option value="F">either</option>
+          <option value="N">Hand 1</option>
+          <option value="S">Hand 2</option>
+        </select>
+      </label>
+    </div>
+  </details>
 
   <div class="btns">
     <button class="go" id="go">Solve</button>
@@ -233,6 +271,11 @@ document.getElementById('go').addEventListener('click', async () => {
   const busy = document.getElementById('busy'), out = document.getElementById('out');
   busy.textContent = 'solving…'; out.innerHTML = '';
   const fd = new FormData(); fd.append('top', h1); fd.append('bottom', h2);
+  const eN = document.getElementById('eN').value.trim();
+  const eS = document.getElementById('eS').value.trim();
+  if (eN !== '') fd.append('eN', eN);
+  if (eS !== '') fd.append('eS', eS);
+  fd.append('start', document.getElementById('start').value);
   const r = await fetch('/suit/solve', {method:'POST', body:fd});
   out.innerHTML = await r.text(); busy.textContent = '';
   out.scrollIntoView({behavior:'smooth', block:'nearest'});

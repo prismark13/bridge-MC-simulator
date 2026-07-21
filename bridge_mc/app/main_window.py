@@ -251,6 +251,34 @@ class MainWindow(QMainWindow):
         srow.addWidget(mb)
         srow.addStretch(1)
         sv.addLayout(srow)
+
+        # Optional entry limits. Default ∞ (unlimited) reproduces the classic
+        # suit-combination answer; lowering them models not being able to repeat
+        # a finesse for lack of a side entry to a hand.
+        erow = QHBoxLayout()
+        erow.addWidget(QLabel("Entries"))
+
+        def _spin():
+            s = QSpinBox(); s.setRange(-1, 13); s.setValue(-1)
+            s.setSpecialValueText("∞"); s.setMaximumWidth(56)
+            s.setToolTip("Outside entries to this hand (∞ = unlimited)")
+            return s
+        erow.addWidget(QLabel("to top"))
+        self.suit_eN = _spin(); erow.addWidget(self.suit_eN)
+        erow.addWidget(QLabel("to bottom"))
+        self.suit_eS = _spin(); erow.addWidget(self.suit_eS)
+        erow.addWidget(QLabel("on lead"))
+        self.suit_start = QComboBox()
+        self.suit_start.addItem("either", "F")
+        self.suit_start.addItem("top", "N")
+        self.suit_start.addItem("bottom", "S")
+        self.suit_start.setMaximumWidth(90)
+        erow.addWidget(self.suit_start)
+        for w in (self.suit_eN, self.suit_eS):
+            w.valueChanged.connect(self._reanalyse_suit)
+        self.suit_start.currentIndexChanged.connect(self._reanalyse_suit)
+        erow.addStretch(1)
+        sv.addLayout(erow)
         # QWebEngineView (not QTextBrowser): the suit report needs real CSS —
         # tabular figures, aligned columns and proper spacing — which Qt's
         # rich-text subset can't do.
@@ -621,14 +649,40 @@ class MainWindow(QMainWindow):
                 "example, not a value. Leave one side blank for a void opposite, "
                 "or click <b>Cards…</b> to pick it.</p>"))
 
+    def _reanalyse_suit(self):
+        """Re-solve with the current entry settings, but only if a suit is set."""
+        if self.suit_top.text().strip() or self.suit_bot.text().strip():
+            self._analyse_suit()
+
+    def _suit_entries(self):
+        """Read the entry controls: (entries, start). ``entries`` is None when
+        both hands are unlimited, so the normal path is untouched."""
+        eN, eS = self.suit_eN.value(), self.suit_eS.value()
+        if eN < 0 and eS < 0:
+            return None, "F"
+        big = 99
+        return (big if eN < 0 else eN, big if eS < 0 else eS), \
+            self.suit_start.currentData()
+
     def _start_suits(self, items):
         self.suit_view.setHtml(_suit_page("<p class='hint'>Solving…</p>"))
-        self.suit_worker = SuitWorker(items)
+        entries, start = self._suit_entries()
+        self.suit_worker = SuitWorker(items, entries=entries, start=start)
         self.suit_worker.done.connect(self._render_suits)
         self.suit_worker.start()
 
     def _render_suits(self, results):
         html = ""
+        entries, start = self._suit_entries()
+        if entries is not None:
+            eN, eS = entries
+            fmt = lambda v: "∞" if v >= 99 else str(v)
+            side = {"F": "either hand", "N": "the top hand",
+                    "S": "the bottom hand"}[start]
+            html += (f"<div class='ent'>Entry-limited — outside entries: "
+                     f"top <b>{fmt(eN)}</b>, bottom <b>{fmt(eS)}</b>; on lead in "
+                     f"{side}. Odds and lines account for not being able to repeat "
+                     f"a lead you can't get back for.</div>")
         for title, r, _is_opt in results:
             if "error" in r:
                 html += (f"<p class='hint' style='color:#d47b7b'>{title}: "
@@ -812,6 +866,9 @@ th, td { text-align:left }
 .eq    { color:#5ec48d; font-weight:700; margin-right:5px }
 .eqnote{ color:#8b897f; font-size:11.5px; margin-top:4px }
 .eqnote { font-style:italic }
+.ent   { background:#221f1a; border:1px solid #4a4326; border-radius:8px;
+  padding:8px 12px; margin-bottom:12px; font-size:12px; color:#d8cba0 }
+.ent b { color:#f0e6c0 }
 .drill { margin-top:5px }
 .drill > summary { color:#5ec48d; font-size:11.5px; cursor:pointer;
   list-style:none; display:inline-block; padding:1px 8px; border:1px solid #2f2d29;

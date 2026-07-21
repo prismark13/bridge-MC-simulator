@@ -110,19 +110,37 @@ class _Solver:
         self.runid = runid
         self.deadline = deadline
         self.memo = {}
+        # Entry model (off by default → identical to unlimited entries). When on,
+        # a lead from a hand declarer is not already in costs an outside entry to
+        # that hand; run out and you cannot lead from it. State: which hand you
+        # are in ('N'/'S', 'F' = free/on lead in either, 'X' = off lead) and the
+        # remaining outside entries to each hand.
+        self.entries = False
+        self.e0 = ("F", 99, 99)          # root (curr, entries-N, entries-S)
+
+    def _entry(self, curr, eN, eS, lh):
+        """Entry cost of leading from ``lh``. Returns the entries left after, or
+        None if the hand cannot be reached."""
+        if not self.entries or curr == "F" or curr == lh:
+            return (eN, eS)
+        if lh == "N":
+            return (eN - 1, eS) if eN > 0 else None
+        return (eN, eS - 1) if eS > 0 else None
 
     def _tick(self):
         if self.deadline is not None and time.monotonic() > self.deadline:
             raise Timeout
 
-    def solve(self, N, S, wstate, active):
+    def solve(self, N, S, wstate, active, curr="F", eN=99, eS=99):
         """Vector set for the position: declarer to lead a fresh trick.
         ``wstate`` is a tuple over all worlds of (E, W) remaining; ``active`` is
-        the frozenset of world indices still possible on this line of play."""
+        the frozenset of world indices still possible on this line of play.
+        ``curr/eN/eS`` are the entry state (ignored unless ``self.entries``)."""
         self._tick()
         if (not N and not S) or not active:
             return [tuple(0 if i in active else None for i in range(self.n))]
-        key = (N, S, wstate, active)
+        key = ((N, S, wstate, active, curr, eN, eS) if self.entries
+               else (N, S, wstate, active))
         got = self.memo.get(key)
         if got is not None:
             return got
@@ -132,25 +150,30 @@ class _Solver:
             miss |= set(e) | set(w)
         out = []
         for lh, hand in (("N", N), ("S", S)):          # MAX: union over branches
+            ent = self._entry(curr, eN, eS, lh)
+            if ent is None:                            # cannot reach this hand
+                continue
+            nEN, nES = ent
             other = set(S if lh == "N" else N)
             for lc in _reps(hand, other | miss):
-                out.extend(self._lead(N, S, wstate, active, lh, lc))
+                out.extend(self._lead(N, S, wstate, active, lh, lc, nEN, nES))
         out = _pareto(out)
         self.memo[key] = out
         return out
 
-    def _lead(self, N, S, wstate, active, lh, lc):
+    def _lead(self, N, S, wstate, active, lh, lc, eN=99, eS=99):
         N1, S1 = (_rm(N, lc), S) if lh == "N" else (N, _rm(S, lc))
         _, s2, s3, s4 = (lambda o: [o, _CLOCK[o], _CLOCK[_CLOCK[o]],
                                     _CLOCK[_CLOCK[_CLOCK[o]]]])(lh)
         return self._dmin(N1, S1, wstate, active, s2,
                           lambda ws, ac, c2: self._third(N1, S1, ws, ac, lh, lc,
-                                                         s2, c2, s3, s4))
+                                                         s2, c2, s3, s4, eN, eS))
 
-    def _third(self, N1, S1, wstate, active, lh, lc, s2, c2, s3, s4):
+    def _third(self, N1, S1, wstate, active, lh, lc, s2, c2, s3, s4, eN=99, eS=99):
         hand = N1 if s3 == "N" else S1
         if not hand:
-            return self._fourth(N1, S1, wstate, active, lh, lc, s2, c2, s3, None, s4)
+            return self._fourth(N1, S1, wstate, active, lh, lc, s2, c2, s3, None,
+                                s4, eN, eS)
         miss = set()
         for i in active:
             e, w = wstate[i]
@@ -160,10 +183,11 @@ class _Solver:
         out = []
         for c3 in _reps(hand, other | miss | {hi}):     # MAX: union
             out.extend(self._fourth(N1, S1, wstate, active, lh, lc,
-                                    s2, c2, s3, c3, s4))
+                                    s2, c2, s3, c3, s4, eN, eS))
         return _pareto(out)
 
-    def _fourth(self, N1, S1, wstate, active, lh, lc, s2, c2, s3, c3, s4):
+    def _fourth(self, N1, S1, wstate, active, lh, lc, s2, c2, s3, c3, s4,
+                eN=99, eS=99):
         N2, S2 = N1, S1
         if c3 is not None:
             N2, S2 = (_rm(N1, c3), S1) if s3 == "N" else (N1, _rm(S1, c3))
@@ -174,14 +198,17 @@ class _Solver:
             played[s3] = c3
         return self._dmin(N2, S2, wstate, active, s4,
                           lambda ws, ac, c4: self._resolve(N2, S2, ws, ac,
-                                                           played, s4, c4))
+                                                           played, s4, c4, eN, eS))
 
-    def _resolve(self, N2, S2, wstate, active, played, s4, c4):
+    def _resolve(self, N2, S2, wstate, active, played, s4, c4, eN=99, eS=99):
         trick = dict(played)
         if c4 is not None:
             trick[s4] = c4
-        won = 1 if max(trick, key=lambda k: trick[k]) in _NS else 0
-        sub = self.solve(N2, S2, wstate, active)
+        winner = max(trick, key=lambda k: trick[k])
+        won = 1 if winner in _NS else 0
+        # after the trick declarer is in the hand that won it, or off lead
+        curr2 = winner if won else "X"
+        sub = self.solve(N2, S2, wstate, active, curr2, eN, eS)
         if not won:
             return sub
         return [tuple(None if x is None else x + 1 for x in v) for v in sub]
@@ -231,7 +258,11 @@ class _Solver:
         return _pareto(out)
 
 
-def _setup(top, bottom, time_budget):
+def _setup(top, bottom, time_budget, entries=None, start="F"):
+    """Build the shared solver context. ``entries=(eN, eS)`` turns on the entry
+    model — outside entries to the top (N) and bottom (S) hands — and ``start`` is
+    the hand declarer is on lead in ('N'/'S', or 'F' = either). Default (None) is
+    unlimited entries, i.e. the classic result."""
     from .suitplay_opt import _worlds, _runs
     N, S, missing = parse_combo(top, bottom)
     N, S = tuple(sorted(N)), tuple(sorted(S))
@@ -244,7 +275,24 @@ def _setup(top, bottom, time_budget):
         for c in run:
             runid[c] = rid
     sv = _Solver(n, runid, deadline=time.monotonic() + time_budget)
+    if entries is not None:
+        eN, eS = entries
+        cap = len(N) + len(S)                 # entries beyond the tricks are moot
+        sv.entries = True
+        sv.e0 = (start, min(eN, cap), min(eS, cap))
     return N, S, missing, wstate, weights, sv, n
+
+
+def _root_leads(sv, N, S):
+    """The (hand, entries-after) for each hand declarer can afford to lead from
+    at the root — respecting the entry state it starts in."""
+    curr, eN, eS = sv.e0
+    out = []
+    for lh in ("N", "S"):
+        ent = sv._entry(curr, eN, eS, lh)
+        if ent is not None:
+            out.append((lh, ent))
+    return out
 
 
 def _score(vecs, weights, n, k):
@@ -258,11 +306,15 @@ def _opening_vecs(N, S, missing, wstate, weights, sv, n):
     scoring it for each trick target afterwards is nearly free)."""
     active = frozenset(range(n))
     miss = set(missing)
+    afford = dict(_root_leads(sv, N, S))       # hand -> entries left after leading
     out = []
     for lh, hand in (("N", N), ("S", S)):
+        if lh not in afford:                   # cannot reach this hand at the root
+            continue
+        nEN, nES = afford[lh]
         other = set(S if lh == "N" else N)
         for lc in _reps(hand, other | miss):
-            out.append((lh, lc, sv._lead(N, S, wstate, active, lh, lc)))
+            out.append((lh, lc, sv._lead(N, S, wstate, active, lh, lc, nEN, nES)))
     return out
 
 
@@ -397,15 +449,20 @@ def _score_ev(vecs, weights, active):
                 for v in vecs), default=0)
 
 
-def _won(lh, lc, s2, c2, s3, c3, s4, c4):
+def _winseat(lh, lc, s2, c2, s3, c3, s4, c4):
     trick = {lh: lc}
     for s, c in ((s2, c2), (s3, c3), (s4, c4)):
         if c is not None:
             trick[s] = c
-    return max(trick, key=lambda k: trick[k]) in _NS
+    return max(trick, key=lambda k: trick[k])
 
 
-def _plan_tree(sv, N, S, wstate, active, need, weights, n, ev=False, depth=0):
+def _won(lh, lc, s2, c2, s3, c3, s4, c4):
+    return _winseat(lh, lc, s2, c2, s3, c3, s4, c4) in _NS
+
+
+def _plan_tree(sv, N, S, wstate, active, need, weights, n,
+               curr="F", eN=99, eS=99, ev=False, depth=0):
     """Declarer's OPTIMAL CONDITIONAL plan as a tree, for one of two objectives:
     reach ``need`` tricks (IMPs / a contract), or — with ``ev=True`` — maximise the
     expected number of tricks (matchpoints).
@@ -426,15 +483,21 @@ def _plan_tree(sv, N, S, wstate, active, need, weights, n, ev=False, depth=0):
             else _score_act(vs, weights, act, need)
 
     miss = _missing(wstate, active)
-    # MAX: declarer's lead — the branch that best serves the objective.
+    # MAX: declarer's lead — the affordable one that best serves the objective.
     best = None
     for lh, hand in (("N", N), ("S", S)):
+        ent = sv._entry(curr, eN, eS, lh)
+        if ent is None:                        # cannot reach this hand — skip
+            continue
+        pEN, pES = ent
         other = set(S if lh == "N" else N)
         for lc in _reps(hand, other | miss):
-            sc = _sc(sv._lead(N, S, wstate, active, lh, lc), active)
+            sc = _sc(sv._lead(N, S, wstate, active, lh, lc, pEN, pES), active)
             if best is None or sc > best[0]:
-                best = (sc, lh, lc)
-    _, lh, lc = best
+                best = (sc, lh, lc, pEN, pES)
+    if best is None:
+        return None
+    _, lh, lc, eN, eS = best                    # entries left after paying to lead
     N1, S1 = (_rm(N, lc), S) if lh == "N" else (N, _rm(S, lc))
     s2, s3, s4 = _CLOCK[lh], _CLOCK[_CLOCK[lh]], _CLOCK[_CLOCK[_CLOCK[lh]]]
     hand3 = N1 if s3 == "N" else S1
@@ -451,7 +514,7 @@ def _plan_tree(sv, N, S, wstate, active, need, weights, n, ev=False, depth=0):
             b3 = None
             for cand in _reps(hand3, other3 | miss3 | {hi}):
                 sc = _sc(sv._fourth(N1, S1, ws2, act2, lh, lc, s2, c2,
-                                    s3, cand, s4), act2)
+                                    s3, cand, s4, eN, eS), act2)
                 if b3 is None or sc > b3[0]:
                     b3 = (sc, cand)
             c3 = b3[1] if b3 else None
@@ -460,14 +523,23 @@ def _plan_tree(sv, N, S, wstate, active, need, weights, n, ev=False, depth=0):
             N2, S2 = (_rm(N1, c3), S1) if s3 == "N" else (N1, _rm(S1, c3))
         # MIN: fourth hand plays best defence — the reply leaving declarer least.
         br4 = _defender_branches(sv, N2, S2, ws2, act2, s4)
-        rid4 = min(br4, key=lambda r: _sc(
-            sv.solve(*_after4(N2, S2, ws2, br4[r], s4)), frozenset(br4[r])))
+
+        def _after(r):
+            p4 = br4[r]
+            c4r = max((c for c in p4.values() if c is not None), default=None)
+            seat = _winseat(lh, lc, s2, c2, s3, c3, s4, c4r)
+            cr = seat if seat in _NS else "X"
+            return sv.solve(N2, S2, _apply(ws2, p4, s4), frozenset(p4),
+                            cr, eN, eS)
+        rid4 = min(br4, key=lambda r: _sc(_after(r), frozenset(br4[r])))
         plays4 = br4[rid4]
         ws3, act3 = _apply(ws2, plays4, s4), frozenset(plays4)
         c4 = max((c for c in plays4.values() if c is not None), default=None)
-        won = _won(lh, lc, s2, c2, s3, c3, s4, c4)
+        seat = _winseat(lh, lc, s2, c2, s3, c3, s4, c4)
+        won = seat in _NS
+        curr2 = seat if won else "X"
         cont = _plan_tree(sv, N2, S2, ws3, act3, need - (1 if won else 0),
-                          weights, n, ev, depth + 1)
+                          weights, n, curr2, eN, eS, ev, depth + 1)
         branches.append({"c2": c2, "c3": c3, "won": won,
                          "wt": sum(weights[i] for i in act2), "cont": cont})
     return {"lc": lc, "lh": lh, "s3": s3, "out": frozenset(miss),
@@ -767,7 +839,8 @@ def _trivial(nd):
 def plan_tree(ctx, goal):
     """The optimal conditional line for ``goal`` tricks, as a drillable tree."""
     N, S, missing, wstate, weights, sv, n = ctx
-    raw = _plan_tree(sv, N, S, wstate, frozenset(range(n)), goal, weights, n)
+    raw = _plan_tree(sv, N, S, wstate, frozenset(range(n)), goal, weights, n,
+                     *sv.e0)
     return _to_display(raw)
 
 
@@ -792,7 +865,7 @@ def matchpoints(ctx):
     ranked = sorted(best.items(), key=lambda x: -x[1])
     top = ranked[0][1] if ranked else 0.0
     ties = [d for d, ev in ranked if abs(ev - top) < 5e-4]
-    raw = _plan_tree(sv, N, S, wstate, active, 0, weights, n, ev=True)
+    raw = _plan_tree(sv, N, S, wstate, active, 0, weights, n, *sv.e0, ev=True)
     return {"tricks": round(top, 2), "tree": _to_display(raw),
             "plan": _headline(_to_display(raw)), "equiv": ties}
 
@@ -851,11 +924,15 @@ def _display(top, bottom, payload):
 
 
 def suit_vec(top: str, bottom: str, time_budget: float = 30.0,
-             use_cache: bool = True) -> dict:
+             use_cache: bool = True, entries=None, start: str = "F") -> dict:
     """Exact trick-count distribution by vector propagation, plus the real line.
     A solved holding is cached — the answer never changes — so it is instant next
-    time (and the precompute fills the slow tail offline)."""
-    if use_cache:
+    time (and the precompute fills the slow tail offline).
+
+    ``entries=(eN, eS)`` constrains outside entries to the top (N) and bottom (S)
+    hands (``start`` = the hand on lead, 'N'/'S'/'F'). Entry-limited solves are
+    NOT cached — the cache holds the unlimited-entry answer only."""
+    if use_cache and entries is None:
         try:
             from .suitcache import get_full
             hit = get_full(top, bottom)
@@ -865,10 +942,10 @@ def suit_vec(top: str, bottom: str, time_budget: float = 30.0,
             hit["cached"] = True
             return _display(top, bottom, hit)
 
-    ctx = _setup(top, bottom, time_budget)
+    ctx = _setup(top, bottom, time_budget, entries=entries, start=start)
     N, S, missing, wstate, weights, sv, n = ctx
     total = sum(weights) or 1
-    vecs = sv.solve(N, S, wstate, frozenset(range(n)))
+    vecs = sv.solve(N, S, wstate, frozenset(range(n)), *sv.e0)
     maxt = len(N) + len(S)
     cum = {}
     for k in range(1, maxt + 1):
@@ -894,7 +971,7 @@ def suit_vec(top: str, bottom: str, time_budget: float = 30.0,
                                "max_tricks": max(cum) if cum else 0,
                                "plans": plans, "grid": grid, "trees": trees,
                                "equiv": equiv, "mp": mp})
-    if use_cache and complete:
+    if use_cache and complete and entries is None:
         try:
             from .suitcache import put_full
             put_full(top, bottom, r)

@@ -36,9 +36,11 @@ class SuitWorker(QThread):
     can take a few seconds on two-honour holdings)."""
     done = Signal(list)               # list[(title, result_dict, is_optimal)]
 
-    def __init__(self, items):        # items: list[(title, top, bot)]
-        super().__init__()
+    def __init__(self, items, entries=None, start="F"):
+        super().__init__()               # items: list[(title, top, bot)]
         self.items = items
+        self.entries = entries           # None = unlimited, else (eN, eS)
+        self.start = start
 
     def run(self):
         # vec-prop (Frank, Basin & Bundy, AAAI 2000): exact on every holding and
@@ -50,10 +52,16 @@ class SuitWorker(QThread):
         out = []
         for title, top, bot in self.items:
             try:
-                out.append((title, suit_vec(top, bot, time_budget=25.0), True))
+                out.append((title, suit_vec(top, bot, time_budget=25.0,
+                                            entries=self.entries,
+                                            start=self.start), True))
             except Timeout:
-                from ..domain.suitplay_opt import suit_optimal
-                out.append((title, suit_optimal(top, bot), True))
+                if self.entries is not None:   # no non-entry fallback would be right
+                    out.append((title, {"error": "Timed out with entry limits — "
+                                        "try the full-entry solve."}, False))
+                else:
+                    from ..domain.suitplay_opt import suit_optimal
+                    out.append((title, suit_optimal(top, bot), True))
             except Exception as e:         # noqa: BLE001
                 out.append((title, {"error": str(e)}, False))
         self.done.emit(out)

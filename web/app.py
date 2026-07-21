@@ -71,10 +71,18 @@ async def suit_solve(request: Request, _=Depends(_guard)):
     from .suit import solve_html
     f = await _form_dict(request)
     top, bottom = (f.get("top") or "").strip(), (f.get("bottom") or "").strip()
+
+    def _ent(key):
+        v = (f.get(key) or "").strip()
+        return int(v) if v.isdigit() else None
+    eN, eS, start = _ent("eN"), _ent("eS"), (f.get("start") or "F")
+    entries = None if eN is None and eS is None else (eN if eN is not None else 99,
+                                                      eS if eS is not None else 99)
     loop = asyncio.get_running_loop()
     try:                       # keep the event loop free; cap CPU per request
         return await asyncio.wait_for(
-            loop.run_in_executor(_pool, solve_html, top, bottom), timeout=40)
+            loop.run_in_executor(_pool, solve_html, top, bottom, 20.0,
+                                 entries, start), timeout=40)
     except asyncio.TimeoutError:
         return ("<p class='warn'>Timed out — this is one of the slow holdings. "
                 "Try the desktop app.</p>")
