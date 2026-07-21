@@ -655,6 +655,24 @@ class MainWindow(QMainWindow):
                      f"<span>— <b>=</b> marks an equally-good line; hopeless and "
                      f"clearly-inferior ones omitted</span></div>"
                      f"<table class='grid'><tr><th></th>{hdr}</tr>{body}</table>")
+
+        # How the recommended line pays off by defender split (SuitPlay-style).
+        splits = r.get("splits") or []
+        if splits:
+            body = ""
+            for s in splits:
+                body += (f"<tr><td class='tr'>{s['tricks']}</td>"
+                         f"<td class='num pv'>{s['prob']:.1f}<span class='pc'>%</span></td>"
+                         f"<td class='sp'>{s['west'] or '—'}</td>"
+                         f"<td class='sp'>{s['east'] or '—'}</td>"
+                         f"<td class='brk'>{s['break']}</td></tr>")
+            html += (f"<div class='sec'>by defender split "
+                     f"<span>— under the matchpoints line; West sits over the "
+                     f"bottom hand</span></div>"
+                     f"<details class='drill'><summary>show breakdown</summary>"
+                     f"<table class='splits'><tr><th>tricks</th>"
+                     f"<th class='num'>chance</th><th>West</th><th>East</th>"
+                     f"<th>break</th></tr>{body}</table></details>")
         return f"<div class='combo'>{html}</div>"
 
     def _pick_suit(self):
@@ -902,6 +920,14 @@ th, td { text-align:left }
 .alt  .pct { color:#6d6b64 }
 .tied  { color:#cbd8c9 }
 .tied .pct { color:#7fb98f }
+.splits { margin-top:4px }
+.splits th { font-size:10px; font-weight:600; color:#77756c; letter-spacing:.05em;
+  text-transform:uppercase; text-align:left; padding:0 16px 4px 0 }
+.splits td { padding:3px 16px 3px 0; vertical-align:baseline; white-space:nowrap }
+.splits tr + tr td { border-top:1px solid #2a2825 }
+.splits .tr  { font-weight:700; color:#5ec48d; width:2.4em; font-variant-numeric:tabular-nums }
+.splits .sp  { font-family:Consolas,monospace; color:#e8e6df; letter-spacing:.5px }
+.splits .brk { color:#77756c; font-variant-numeric:tabular-nums }
 .eq    { color:#5ec48d; font-weight:700; margin-right:5px }
 .eqnote{ color:#8b897f; font-size:11.5px; margin-top:4px }
 .eqnote { font-style:italic }

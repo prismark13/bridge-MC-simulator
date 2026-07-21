@@ -71,8 +71,8 @@ def _conn():
 # plan — which names cards, not hands — is reusable across them. The display
 # labels (which hand, the exact spots) are re-derived from the actual holding on
 # lookup, so only the canonical-invariant payload lives in the DB.
-_FULL_FIELDS = ("cum", "plans", "grid", "trees", "equiv", "mp", "max_tricks",
-                "strategies", "worlds")
+_FULL_FIELDS = ("cum", "plans", "grid", "trees", "equiv", "mp", "splits",
+                "max_tricks", "strategies", "worlds")
 
 
 def get_full(top: str, bottom: str):

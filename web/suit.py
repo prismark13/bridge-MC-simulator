@@ -103,6 +103,22 @@ def solve_html(top: str, bottom: str, budget: float = 20.0,
         alt_block = (f"<div class='sec'>best lines by target "
                      f"<span class='dim'>(= equally good)</span></div>"
                      f"<table class='alts'>{alts}</table>")
+
+    # SuitPlay-style: how the recommended line pays off by defender split.
+    splits = r.get("splits") or []
+    split_block = ""
+    if splits:
+        srows = "".join(
+            f"<tr><td class='st'>{s['tricks']}</td>"
+            f"<td class='spp'>{s['prob']:.1f}<span class='pc'>%</span></td>"
+            f"<td class='sh'>{s['west'] or '—'}</td>"
+            f"<td class='sh'>{s['east'] or '—'}</td></tr>" for s in splits)
+        split_block = (
+            f"<div class='sec'>by defender split "
+            f"<span class='dim'>(West over Hand 2)</span></div>"
+            f"<details class='drill'><summary>show breakdown</summary>"
+            f"<table class='splits'><tr><th>tks</th><th>chance</th>"
+            f"<th>West</th><th>East</th></tr>{srows}</table></details>")
     return (f"<div class='res'>{ent_banner}"
             f"<div class='holding'>{top or '<i>void</i>'}"
             f"<span class='vs'>opposite</span>{bottom or '<i>void</i>'}</div>"
@@ -111,7 +127,7 @@ def solve_html(top: str, bottom: str, budget: float = 20.0,
             f"<div class='sec'>if you need</div>"
             f"<table class='need'>"
             f"<tr><th>tricks</th><th>chance</th><th>best play</th></tr>{rows}</table>"
-            f"{mp_block}{alt_block}</div>")
+            f"{mp_block}{alt_block}{split_block}</div>")
 
 
 def _rank_row(hand: str) -> str:
@@ -174,6 +190,11 @@ SUIT_HTML = """<!doctype html>
   .need .pl{color:var(--ink)}
   .alts .t{font-weight:700;width:3.2em;color:var(--muted)}
   .alts .pl{color:var(--muted);font-size:12px}
+  .splits .st{font-weight:700;color:var(--accent);width:2.4em;
+    font-variant-numeric:tabular-nums}
+  .splits .spp{font-weight:700;font-variant-numeric:tabular-nums;width:4em}
+  .splits .sh{font-family:ui-monospace,Consolas,monospace;letter-spacing:.5px;
+    color:var(--ink)}
   .eq{color:var(--accent);font-weight:800}
   .eqnote{color:var(--muted);font-style:italic;font-size:12px;margin-top:3px}
   .ent{background:var(--felt-soft,#1c2a22);border:1px solid var(--line);

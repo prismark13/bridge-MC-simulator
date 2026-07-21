@@ -917,6 +917,58 @@ def matchpoints(ctx):
             "plan": _headline(_to_display(raw)), "equiv": ties}
 
 
+def _fmt_hand(cards):
+    """A defender holding for the split table: honours by name, spots as ``x``
+    (they are interchangeable), e.g. {K,4,3} -> 'Kxx'. Void shows as an em dash."""
+    honours = "".join(VALRANK[c] for c in sorted(cards, reverse=True) if c >= 10)
+    spots = sum(1 for c in cards if c < 10)
+    return (honours + "x" * spots) or "—"
+
+
+def split_table(ctx, vecs):
+    """How the recommended (matchpoints) line pays off by defender split — the
+    SuitPlay-style breakdown: for one fixed best line, every layout's a-priori
+    probability and the tricks it yields against best defence. Rows are the split
+    (West/East holdings), grouped where the spots don't distinguish them."""
+    N, S, missing, wstate, weights, sv, n = ctx
+    total = sum(weights) or 1
+    if not vecs:
+        return []
+    # The line that maximises average tricks — a single, well-defined strategy;
+    # its per-world vector is exactly "tricks in each layout".
+    best = max(vecs, key=lambda v: sum(weights[i] * v[i] for i in range(n)
+                                       if v[i] is not None))
+    agg = {}                                    # (west, east, lw, le, tricks) -> wt
+    for i in range(n):
+        t = best[i]
+        if t is None:
+            continue
+        e, w = wstate[i]
+        key = (_fmt_hand(w), _fmt_hand(e), len(w), len(e), t)
+        agg[key] = agg.get(key, 0) + weights[i]
+    rows = [{"west": k[0], "east": k[1], "break": f"{k[2]}-{k[3]}",
+             "tricks": k[4], "prob": round(100.0 * wt / total, 1)}
+            for k, wt in agg.items()]
+    rows.sort(key=lambda r: (-r["tricks"], -r["prob"]))
+    # Store canonically: West is the defender behind the bottom hand, which the
+    # N/S-normalising cache can flip. Emit as-if canonical so _display can put it
+    # back to the actual holding's orientation (see _flip_splits).
+    from .suitcache import _owner_rle
+    if _owner_rle(set(N), set(S)) > _owner_rle(set(S), set(N)):
+        rows = _flip_splits(rows)
+    return rows
+
+
+def _flip_splits(rows):
+    """Swap the West/East view of a split table (used to re-orient it)."""
+    out = []
+    for r in rows:
+        lw, le = r["break"].split("-")
+        out.append({**r, "west": r["east"], "east": r["west"],
+                    "break": f"{le}-{lw}"})
+    return out
+
+
 def _headline(disp):
     """One-line summary: the main line down the spine (ignoring the exceptions).
     'Draw the rest' is just cashing winners, so it is left off the headline."""
@@ -960,13 +1012,19 @@ def _display(top, bottom, payload):
     mt = payload.get("max_tricks", 0)
     plans, grid = payload.get("plans") or {}, payload.get("grid") or {}
     trees = payload.get("trees") or {}
+    # The split table is stored canonically; put its West/East back to how THIS
+    # holding sits (West behind the bottom hand).
+    from .suitcache import _owner_rle
+    splits = payload.get("splits") or []
+    if splits and _owner_rle(set(N), set(S)) > _owner_rle(set(S), set(N)):
+        splits = _flip_splits(splits)
     payload.update(
         top="".join(VALRANK[r] for r in sorted(N, reverse=True)),
         bottom="".join(VALRANK[r] for r in sorted(S, reverse=True)),
         missing="".join(VALRANK[r] for r in sorted(missing, reverse=True)) or "—",
         exact=True, play=plans.get(mt, ""), lines=grid.get(mt, []),
         tree=trees.get(mt), equiv=payload.get("equiv") or {},
-        mp=payload.get("mp"))
+        mp=payload.get("mp"), splits=splits)
     return payload
 
 
@@ -1076,7 +1134,8 @@ def suit_vec(top: str, bottom: str, time_budget: float = 30.0,
     # The odds are the answer and are computed exactly; the plans and line grid
     # are commentary. On a slow holding let the commentary time out rather than
     # lose the exact odds with it — and don't cache a half-built result.
-    grid, plans, trees, equiv, mp, complete = {}, {}, {}, {}, None, True
+    grid, plans, trees, equiv, mp, splits = {}, {}, {}, {}, None, []
+    complete = True
     if cum:
         try:
             grid = openings_all(top, bottom, time_budget, ctx=ctx)
@@ -1084,13 +1143,14 @@ def suit_vec(top: str, bottom: str, time_budget: float = 30.0,
             trees = trees_all(cum, ctx)
             equiv = equiv_all(cum, ctx)
             mp = matchpoints(ctx)
+            splits = split_table(ctx, vecs)
         except Timeout:
             complete = False
 
     r = _display(top, bottom, {"worlds": n, "strategies": len(vecs), "cum": cum,
                                "max_tricks": max(cum) if cum else 0,
                                "plans": plans, "grid": grid, "trees": trees,
-                               "equiv": equiv, "mp": mp})
+                               "equiv": equiv, "mp": mp, "splits": splits})
     if use_cache and complete and not custom:
         try:
             from .suitcache import put_full
