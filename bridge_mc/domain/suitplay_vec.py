@@ -926,6 +926,64 @@ def _display(top, bottom, payload):
     return payload
 
 
+import collections as _collections
+import math as _math
+import threading as _threading
+
+# Vacant spaces only reweight the worlds; the solved vector sets never change.
+# So the SLOW part (the solve) is cached in memory per (holding, entries, start)
+# and a different vacant-space setting just re-scores it — turning a ~1s re-solve
+# into ~50ms. Bounded so long sessions do not grow without limit.
+_BASE = _collections.OrderedDict()
+_BASE_LOCK = _threading.Lock()
+_BASE_MAX = 16
+
+
+def _world_weights(wstate, runs, m, vE, vW):
+    """A-priori weights for the given vacant spaces, reconstructed from each
+    world's West holding (so a solved set of worlds can be reweighted without
+    re-solving). A world impossible under these vacant spaces gets weight 0."""
+    tot = vE + vW
+    out = []
+    for e, w in wstate:
+        wc, ec = len(w), len(e)
+        if wc > vW or ec > vE:                 # not enough room this side
+            out.append(0)
+            continue
+        mult = 1
+        for run in runs:
+            k = sum(1 for c in w if c in run)
+            if k:
+                mult *= _math.comb(len(run), k)
+        out.append(mult * _math.comb(tot - m, vW - wc))
+    return out
+
+
+def _base_solve(top, bottom, time_budget, entries, start):
+    """Solve (or reuse) the vector sets for a holding under an entry setting, with
+    neutral 13/13 weights. Cached in memory: reweighting for vacant spaces reuses
+    it. Returns (ctx, vecs, runs)."""
+    key = (top, bottom, entries, start)
+    with _BASE_LOCK:
+        got = _BASE.get(key)
+        if got is not None:
+            _BASE.move_to_end(key)
+    if got is not None:
+        ctx, vecs, runs = got
+        ctx[5].deadline = time.monotonic() + time_budget   # refresh sv deadline
+        return ctx, vecs, runs
+    from .suitplay_opt import _runs
+    ctx = _setup(top, bottom, time_budget, entries=entries, start=start, vac=None)
+    N, S, missing, wstate, weights, sv, n = ctx
+    vecs = sv.solve(N, S, wstate, frozenset(range(n)), *sv.e0)
+    runs = tuple(_runs(missing, set(N) | set(S)))
+    with _BASE_LOCK:
+        _BASE[key] = (ctx, vecs, runs)
+        while len(_BASE) > _BASE_MAX:
+            _BASE.popitem(last=False)
+    return ctx, vecs, runs
+
+
 def suit_vec(top: str, bottom: str, time_budget: float = 30.0,
              use_cache: bool = True, entries=None, start: str = "F",
              vac=None) -> dict:
@@ -935,8 +993,9 @@ def suit_vec(top: str, bottom: str, time_budget: float = 30.0,
 
     ``entries=(eN, eS)`` constrains outside entries to the top (N) and bottom (S)
     hands (``start`` = the hand on lead, 'N'/'S'/'F'). ``vac=(vW, vE)`` sets the
-    defenders' vacant spaces to skew the odds from the bidding. Either constraint
-    is NOT cached — the cache holds the plain unlimited/13-13 answer only."""
+    defenders' vacant spaces to skew the odds from the bidding. Neither is stored
+    in the on-disk cache — that holds the plain unlimited/13-13 answer only — but
+    the solve is reused in memory, so changing vacant spaces re-scores instantly."""
     custom = entries is not None or vac is not None
     if use_cache and not custom:
         try:
@@ -948,10 +1007,21 @@ def suit_vec(top: str, bottom: str, time_budget: float = 30.0,
             hit["cached"] = True
             return _display(top, bottom, hit)
 
-    ctx = _setup(top, bottom, time_budget, entries=entries, start=start, vac=vac)
-    N, S, missing, wstate, weights, sv, n = ctx
+    ctx, vecs, runs = _base_solve(top, bottom, time_budget, entries, start)
+    N, S, missing, wstate, weights0, sv, n = ctx
+    weights = (weights0 if vac is None
+               else _world_weights(wstate, runs, len(missing), vac[1], vac[0]))
+    if vac is not None and 0 in weights:
+        # These vacant spaces make some layouts impossible. The plan tree must not
+        # even mention them, which the reused all-worlds solve would — so drop back
+        # to an exact solve over the reduced world set (rare; extreme skews only).
+        ctx = _setup(top, bottom, time_budget, entries=entries, start=start,
+                     vac=vac)
+        N, S, missing, wstate, weights, sv, n = ctx
+        vecs = sv.solve(N, S, wstate, frozenset(range(n)), *sv.e0)
+    else:
+        ctx = (N, S, missing, wstate, weights, sv, n)
     total = sum(weights) or 1
-    vecs = sv.solve(N, S, wstate, frozenset(range(n)), *sv.e0)
     maxt = len(N) + len(S)
     cum = {}
     for k in range(1, maxt + 1):
