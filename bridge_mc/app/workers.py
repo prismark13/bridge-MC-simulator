@@ -40,7 +40,7 @@ class SuitWorker(QThread):
         super().__init__()               # items: list[(title, top, bot)]
         self.items = items
         self.entries = entries           # None = unlimited, else (eN, eS)
-        self.start = start
+        self.start_hand = start          # NB: not self.start — that is QThread.start
         self.vac = vac                   # None = 13/13, else (vW, vE)
 
     def run(self):
@@ -55,7 +55,7 @@ class SuitWorker(QThread):
             try:
                 out.append((title, suit_vec(top, bot, time_budget=25.0,
                                             entries=self.entries,
-                                            start=self.start,
+                                            start=self.start_hand,
                                             vac=self.vac), True))
             except Timeout:
                 if self.entries is not None or self.vac is not None:  # no fallback
