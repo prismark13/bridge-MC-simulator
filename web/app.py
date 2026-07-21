@@ -40,22 +40,42 @@ app = FastAPI(title="Bridge MC Simulator")
 _security = HTTPBasic(auto_error=True)
 
 
+def _accounts() -> dict:
+    """The valid logins, from the environment (Fly secrets — never in git).
+
+    The primary account is APP_USER / APP_PASS. Additional accounts live in
+    APP_USERS as a comma-separated list of ``name:password`` pairs, e.g.
+    ``maya:secret,kari:secret`` — so partners can be added without touching code.
+    """
+    users = {}
+    primary_pass = os.environ.get("APP_PASS", "")
+    if primary_pass:
+        users[os.environ.get("APP_USER", "bridge")] = primary_pass
+    for pair in os.environ.get("APP_USERS", "").split(","):
+        name, sep, pw = pair.partition(":")
+        if sep and name.strip() and pw:
+            users[name.strip()] = pw
+    return users
+
+
 def auth(creds: HTTPBasicCredentials = Depends(_security)):
-    """Enforce basic auth only when APP_PASS is configured (prod)."""
-    want_user = os.environ.get("APP_USER", "bridge")
-    want_pass = os.environ.get("APP_PASS", "")
-    if not want_pass:                                  # local/dev: open
+    """Enforce basic auth only when at least one account is configured (prod)."""
+    users = _accounts()
+    if not users:                                      # local/dev: open
         return
-    ok = (secrets.compare_digest(creds.username, want_user)
-          and secrets.compare_digest(creds.password, want_pass))
-    if not ok:
+    want = users.get(creds.username)
+    # Always run a constant-time comparison so a missing user can't be told apart
+    # from a wrong password by timing.
+    ok = secrets.compare_digest(creds.password, want or "\0")
+    if want is None or not ok:
         raise HTTPException(status_code=401, detail="bad credentials",
                             headers={"WWW-Authenticate": "Basic"})
 
 
 # When APP_PASS is unset the dependency still runs but returns immediately; to
 # avoid forcing a login prompt in dev we swap it out for a no-op there.
-_guard = auth if os.environ.get("APP_PASS") else (lambda: None)
+_guard = auth if (os.environ.get("APP_PASS") or os.environ.get("APP_USERS")) \
+    else (lambda: None)
 
 
 @app.get("/suit", response_class=HTMLResponse)
