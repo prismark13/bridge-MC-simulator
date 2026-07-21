@@ -72,7 +72,11 @@ def _pareto(vecs, tick=None):
     """Drop vectors pointwise <= another (the paper's pruning step). ``None``
     entries mark unreachable worlds and compare as neutral. ``tick`` is checked
     periodically so an intractable holding (a huge Pareto frontier) still hits its
-    deadline instead of grinding for minutes."""
+    deadline instead of grinding for minutes.
+
+    The dominance of each pair is decided in ONE pass (does u cover v, v cover u,
+    or neither) rather than two function calls — this loop is the solver's hot
+    spot on many-world holdings, so the inlining matters."""
     out = []
     for j, v in enumerate(vecs):
         if tick is not None and j & 1023 == 0:
@@ -80,10 +84,18 @@ def _pareto(vecs, tick=None):
         dominated = False
         keep = []
         for u in out:
-            if _dominates(u, v):
+            u_ge = v_ge = True                 # u covers v?  v covers u?
+            for a, b in zip(u, v):
+                if b is not None and (a is None or a < b):
+                    u_ge = False
+                if a is not None and (b is None or b < a):
+                    v_ge = False
+                if not (u_ge or v_ge):
+                    break
+            if u_ge:                            # v is dominated by an existing u
                 dominated = True
                 break
-            if not _dominates(v, u):
+            if not v_ge:                        # u not dominated by v — keep it
                 keep.append(u)
         if not dominated:
             keep.append(v)
@@ -143,6 +155,10 @@ class _Solver:
         self._tick()
         if (not N and not S) or not active:
             return [tuple(0 if i in active else None for i in range(self.n))]
+        # Inactive worlds are held as None in wstate (nulled the moment they drop
+        # out at a defender split), so the key already ignores their stale state.
+        # That collapses a huge number of transposition-equivalent positions —
+        # what makes the many-world holdings tractable — with an O(1) key.
         key = ((N, S, wstate, active, curr, eN, eS) if self.entries
                else (N, S, wstate, active))
         got = self.memo.get(key)
@@ -239,13 +255,16 @@ class _Solver:
                 branches.setdefault(rid, {})[i] = card
         sets, keys, reps = [], [], []
         for rid, plays in branches.items():
-            ws = list(wstate)
+            widx = frozenset(plays)
+            # Null every world that does not follow this branch: it is inactive
+            # from here down, so freezing its state to None canonicalises the
+            # position and lets transpositions share a memo entry.
+            ws = [wstate[i] if i in widx else None for i in range(self.n)]
             for i, card in plays.items():
                 if card is None:
                     continue
                 e, w = ws[i]
                 ws[i] = (_rm(e, card), w) if dseat == "E" else (e, _rm(w, card))
-            widx = frozenset(plays)
             rep = None if rid is None else max(plays.values())
             sets.append(cont(tuple(ws), widx, rep))
             keys.append(widx)
@@ -273,7 +292,9 @@ class _Solver:
                         else bv[i] if a[i] is None
                         else (a[i] if a[i] < bv[i] else bv[i])
                         for i in rng))
-            acc = _pareto(new, self._tick)
+            # Many (a, bv) combinations collapse to the same vector — dedup before
+            # the O(m^2) Pareto pass so it works on distinct vectors only.
+            acc = _pareto(list(set(new)), self._tick)
         return acc
 
 
