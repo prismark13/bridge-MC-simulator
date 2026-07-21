@@ -68,11 +68,15 @@ def _reps(hand, blockers):
     return out
 
 
-def _pareto(vecs):
+def _pareto(vecs, tick=None):
     """Drop vectors pointwise <= another (the paper's pruning step). ``None``
-    entries mark unreachable worlds and compare as neutral."""
+    entries mark unreachable worlds and compare as neutral. ``tick`` is checked
+    periodically so an intractable holding (a huge Pareto frontier) still hits its
+    deadline instead of grinding for minutes."""
     out = []
-    for v in vecs:
+    for j, v in enumerate(vecs):
+        if tick is not None and j & 1023 == 0:
+            tick()
         dominated = False
         keep = []
         for u in out:
@@ -247,15 +251,30 @@ class _Solver:
             keys.append(widx)
         if not sets:
             return [tuple(None for _ in range(self.n))]
-        out = []
-        for combo in product(*sets):        # one vector per branch
-            v = []
-            for i in range(self.n):
-                vals = [vec[i] for vec, widx in zip(combo, keys)
-                        if i in widx and vec[i] is not None]
-                v.append(min(vals) if vals else None)
-            out.append(tuple(v))
-        return _pareto(out)
+        # Combine the branches one at a time (Cartesian product), taking the
+        # per-world min, and PARETO-PRUNE after each fold instead of only at the
+        # end. Because min is monotone, a partial vector dominated now stays
+        # dominated after further folding, so pruning early is exact — and it
+        # keeps the intermediate sets small, which is what makes the hard
+        # (many-honour) holdings tractable rather than exploding as V^branches.
+        rng = range(self.n)
+        k0 = keys[0]
+        acc = _pareto([tuple(v[i] if i in k0 else None for i in rng)
+                       for v in sets[0]])
+        for b in range(1, len(sets)):
+            kb, sb = keys[b], sets[b]
+            new = []
+            for j, a in enumerate(acc):
+                if j & 63 == 0:            # bound the un-checked work on hard nodes
+                    self._tick()
+                for bv in sb:
+                    new.append(tuple(
+                        a[i] if (i not in kb or bv[i] is None)
+                        else bv[i] if a[i] is None
+                        else (a[i] if a[i] < bv[i] else bv[i])
+                        for i in rng))
+            acc = _pareto(new, self._tick)
+        return acc
 
 
 def _setup(top, bottom, time_budget, entries=None, start="F", vac=None):
