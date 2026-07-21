@@ -794,8 +794,12 @@ def _combined(lc, c3, hand3, out, won):
     if not over:
         return f"cash the {VALRANK[hi]}" if hi >= 10 else ""   # spots just run
     # finesse by running an honour: you lead it meaning to let it ride, because a
-    # missing card can still beat it and you are hoping it sits favourably
-    if lc >= 9 and (c3 is None or c3 < lc) and any(m > lc for m in out):
+    # missing card can still beat it and you hope it sits favourably. This needs a
+    # real two-hand tenace — the partner hand must follow with a low card. With
+    # the partner void (c3 is None) there is no finesse: both defenders play after
+    # you, so a higher card always beats it — you are just cashing/running the suit
+    # from the top and hoping the missing honour falls.
+    if lc >= 9 and c3 is not None and c3 < lc and any(m > lc for m in out):
         return f"run the {VALRANK[lc]}"
     if (c3 is not None and not won
             and lc == min([lc, c3]) and lc < 9 and c3 < 9):
