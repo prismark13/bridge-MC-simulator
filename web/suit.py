@@ -411,15 +411,18 @@ function renderPlayer(){
     "<div class='pmid'>"+phand('West',PLAY.west,'w')+
     "<div class='ptrick'>"+tk+"</div>"+phand('East',PLAY.east,'e')+"</div>"+
     phand('Hand 2',PLAY.h2,'h2')+
-    "<div class='pctl'><button id='pp'>&#9664;</button>"+
+    "<div class='pctl'><button type='button' data-pa='p'>&#9664;</button>"+
     "<span class='pstat'>trick "+STEP+"/"+T.length+" &middot; won "+(cur?cur.ns:0)+"</span>"+
-    "<button id='pn'>&#9654;</button>"+
-    "<button id='pe' class='pendb'>made "+PLAY.made+" &#9654;&#9654;</button></div></div>";
-  document.getElementById('pp').onclick=()=>{ if(STEP>0){STEP--;renderPlayer();} };
-  document.getElementById('pn').onclick=()=>{ if(STEP<T.length){STEP++;renderPlayer();} };
-  document.getElementById('pe').onclick=()=>{ STEP=T.length; renderPlayer(); };
+    "<button type='button' data-pa='n'>&#9654;</button>"+
+    "<button type='button' data-pa='e' class='pendb'>made "+PLAY.made+" &#9654;&#9654;</button></div></div>";
 }
 document.getElementById('out').addEventListener('click', async (ev)=>{
+  const btn=ev.target.closest('[data-pa]');
+  if(btn && PLAY && PLAY.tricks){
+    const a=btn.dataset.pa, n=PLAY.tricks.length;
+    if(a==='p'&&STEP>0) STEP--; else if(a==='n'&&STEP<n) STEP++; else if(a==='e') STEP=n;
+    renderPlayer(); return;
+  }
   const row=ev.target.closest('.prow'); if(!row) return;
   const tbl=row.closest('table'); if(!tbl||!tbl.dataset.top&&!tbl.dataset.bot) return;
   document.querySelectorAll('.prow.on').forEach(r=>r.classList.remove('on'));
