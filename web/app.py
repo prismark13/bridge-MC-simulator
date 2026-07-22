@@ -111,6 +111,26 @@ async def suit_solve(request: Request, _=Depends(_guard)):
                 "Try the desktop app.</p>")
 
 
+@app.post("/suit/play")
+async def suit_play(request: Request, _=Depends(_guard)):
+    """The interactive play-through for one selected layout — returns the deal and
+    the trick-by-trick card sequence as JSON."""
+    from fastapi.responses import JSONResponse
+    from bridge_mc.domain.suitplay_vec import replay_line
+    f = await _form_dict(request)
+    top, bottom = (f.get("top") or "").strip(), (f.get("bottom") or "").strip()
+    wc = [c for c in (f.get("wc") or "").split(",") if c]
+    ec = [c for c in (f.get("ec") or "").split(",") if c]
+    loop = asyncio.get_running_loop()
+    try:
+        data = await asyncio.wait_for(
+            loop.run_in_executor(_pool, replay_line, top, bottom, wc, ec),
+            timeout=40)
+    except asyncio.TimeoutError:
+        data = None
+    return JSONResponse(data or {})
+
+
 @app.get("/healthz", response_class=PlainTextResponse)
 def healthz():
     return "ok"

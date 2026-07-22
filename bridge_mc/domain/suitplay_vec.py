@@ -1019,6 +1019,152 @@ def _fmt_hand(cards):
     return (honours + "x" * spots) or "—"
 
 
+def _obj1(v, active, weights, goal, ev):
+    """One strategy vector's value under the objective (over ``active``)."""
+    if ev:
+        return sum(weights[k] * v[k] for k in active if v[k] is not None)
+    return sum(weights[k] for k in active if v[k] is not None and v[k] >= goal)
+
+
+def _greedy_lead(sv, N, S, wstate, active, weights, goal, ev, lm=None):
+    """The strategy's lead: maximise the objective over ``active`` (deterministic
+    tie-break to the first, so the whole replay is one fixed line). ``lm`` caches
+    the choice — it is world-independent (the info set), so replaying every world
+    for the split table shares it."""
+    if lm is not None:
+        hit = lm.get((N, S, wstate, active))
+        if hit is not None:
+            return hit
+    miss = _missing(wstate, active)
+    best = None
+    for lh, hand in (("N", N), ("S", S)):
+        for lc in _reps(hand, set(S if lh == "N" else N) | miss):
+            sc = max((_obj1(v, active, weights, goal, ev)
+                      for v in sv._lead(N, S, wstate, active, lh, lc)),
+                     default=0)
+            if best is None or sc > best[0]:
+                best = (sc, lh, lc)
+    res = (best[1], best[2]) if best else None
+    if lm is not None:
+        lm[(N, S, wstate, active)] = res
+    return res
+
+
+def _greedy_def(sv, N_, S_, wstate, active, dseat, i, weights, goal, ev, cont):
+    """The defender's best-defence play in world i: minimise declarer's world-i
+    tricks under the continuing strategy. Returns (world-i card, rep, ws, act)."""
+    best = None
+    for rid, plays in _defender_branches(sv, N_, S_, wstate, active, dseat).items():
+        if i not in plays:
+            continue
+        ws, ac = _apply(wstate, plays, dseat), frozenset(plays)
+        rep = None if rid is None else max(c for c in plays.values()
+                                           if c is not None)
+        v = max(cont(ws, ac, rep),
+                key=lambda vv: _obj1(vv, ac, weights, goal, ev), default=None)
+        val = v[i] if (v and v[i] is not None) else 0
+        card = plays[i]
+        keyc = card if card is not None else 99
+        if best is None or (val, keyc) < best[0]:
+            best = ((val, keyc), card, rep, ws, ac)
+    return best[1:] if best else (None, None, wstate, active)
+
+
+def replay_world(ctx, i, goal=None, ev=True, lm=None):
+    """Trace the recommended line against ONE layout — world ``i`` — card by card.
+    Declarer follows one fixed info-set line (maximise the objective over the
+    worlds still consistent with the play — never peeking at the layout); the
+    defender defends best for world i. This is the SAME line the split table uses.
+    Returns ``[{lead:[hand,rank], cards:{seat:rank}, winner, won}]``."""
+    N, S, missing, wstate, weights, sv, n = ctx
+    active = frozenset(range(n))
+    cn, cs, cws = N, S, wstate
+    tricks, guard = [], 0
+    while (cn or cs) and i in active and guard < 13:
+        guard += 1
+        lead = _greedy_lead(sv, cn, cs, cws, active, weights, goal, ev, lm)
+        if lead is None:
+            break
+        lh, lc = lead
+        n1, s1 = (_rm(cn, lc), cs) if lh == "N" else (cn, _rm(cs, lc))
+        s2, s3, s4 = _CLOCK[lh], _CLOCK[_CLOCK[lh]], _CLOCK[_CLOCK[_CLOCK[lh]]]
+        c2, rep2, ws2, act2 = _greedy_def(
+            sv, n1, s1, cws, active, s2, i, weights, goal, ev,
+            lambda ws, ac, r: sv._third(n1, s1, ws, ac, lh, lc, s2, r, s3, s4))
+        hand3 = n1 if s3 == "N" else s1
+        c3 = None
+        if hand3:
+            miss3 = _missing(ws2, act2)
+            other3 = set(s1 if s3 == "N" else n1)
+            hi = max([lc] + ([rep2] if rep2 is not None else []))
+            b3 = None
+            for cand in _reps(hand3, other3 | miss3 | {hi}):
+                sc = max((_obj1(v, act2, weights, goal, ev)
+                          for v in sv._fourth(n1, s1, ws2, act2, lh, lc, s2, rep2,
+                                              s3, cand, s4)), default=0)
+                if b3 is None or sc > b3[0]:
+                    b3 = (sc, cand)
+            c3 = b3[1]
+        n2, s2h = (n1, s1)
+        if c3 is not None:
+            n2, s2h = (_rm(n1, c3), s1) if s3 == "N" else (n1, _rm(s1, c3))
+        played = {k: v for k, v in {lh: lc, s2: rep2, s3: c3}.items()
+                  if v is not None}
+        c4, _r4, ws3, act3 = _greedy_def(
+            sv, n2, s2h, ws2, act2, s4, i, weights, goal, ev,
+            lambda ws, ac, r: sv._resolve(n2, s2h, ws, ac, played, s4, r))
+        trick = {k: v for k, v in {lh: lc, s2: c2, s3: c3, s4: c4}.items()
+                 if v is not None}
+        winner = max(trick, key=lambda k: trick[k])
+        tricks.append({"lead": [1 if lh == "N" else 2, VALRANK[lc]],
+                       "won": winner in _NS, "winner": winner,
+                       "cards": {k: VALRANK[v] for k, v in trick.items()}})
+        cn, cs, cws, active = n2, s2h, ws3, act3
+    return tricks
+
+
+def replay_tricks(ctx, i, goal=None, ev=True, lm=None):
+    """Just the declarer trick count in world i under the replay line — used to
+    make the split table agree with the play-through exactly."""
+    return sum(1 for t in replay_world(ctx, i, goal, ev, lm) if t["won"])
+
+
+_RANKVAL = {v: k for k, v in VALRANK.items()}
+
+
+def replay_line(top, bottom, wc, ec, time_budget=20.0):
+    """The interactive play-through for one selected layout: the recommended line
+    against West holding ``wc`` / East holding ``ec`` (rank letters), trick by
+    trick. Returns the two declarer hands and the trick sequence, or None if the
+    layout is not a valid split of this holding."""
+    ctx = _setup(top, bottom, time_budget)
+    N, S, missing, wstate, weights, sv, n = ctx
+    want_w = frozenset(_RANKVAL[r] for r in wc if r in _RANKVAL)
+    want_e = frozenset(_RANKVAL[r] for r in ec if r in _RANKVAL)
+    idx = next((i for i in range(n)
+                if frozenset(wstate[i][1]) == want_w
+                and frozenset(wstate[i][0]) == want_e), None)
+    if idx is None:
+        return None
+    raw = replay_world(ctx, idx, ev=True)
+    hand = lambda cs: [VALRANK[c] for c in sorted(cs, reverse=True)]
+    won = 0
+    tricks = []
+    for t in raw:
+        # cards keyed N/S/E/W -> hand labels the UI uses
+        pl = {("h1" if s == "N" else "h2" if s == "S"
+               else "w" if s == "W" else "e"): r
+              for s, r in t["cards"].items()}
+        w = t["winner"]
+        won += 1 if t["won"] else 0
+        tricks.append({"play": pl, "won": t["won"],
+                       "winner": ("h1" if w == "N" else "h2" if w == "S"
+                                  else "w" if w == "W" else "e"),
+                       "ns": won})
+    return {"h1": hand(N), "h2": hand(S), "west": hand(want_w),
+            "east": hand(want_e), "tricks": tricks, "made": won}
+
+
 def split_table(ctx, vecs):
     """How the recommended (matchpoints) line pays off by defender split — the
     SuitPlay-style breakdown: for one fixed best line, every layout's a-priori
@@ -1028,21 +1174,24 @@ def split_table(ctx, vecs):
     total = sum(weights) or 1
     if not vecs:
         return []
-    # The line that maximises average tricks — a single, well-defined strategy;
-    # its per-world vector is exactly "tricks in each layout".
-    best = max(vecs, key=lambda v: sum(weights[i] * v[i] for i in range(n)
-                                       if v[i] is not None))
-    agg = {}                                    # (west, east, lw, le, tricks) -> wt
+    # Tricks per layout come from REPLAYING the matchpoint line in each world — the
+    # exact same line the interactive play-through walks — so the table and the
+    # step-through can never disagree (there can be several equally-good lines; we
+    # commit to this one everywhere).
+    agg = {}                            # key -> [wt, west-cards, east-cards]
+    lm = {}                             # shared lead cache across worlds
     for i in range(n):
-        t = best[i]
-        if t is None:
-            continue
         e, w = wstate[i]
+        t = replay_tricks(ctx, i, ev=True, lm=lm)
         key = (_fmt_hand(w), _fmt_hand(e), len(w), len(e), t)
-        agg[key] = agg.get(key, 0) + weights[i]
+        if key not in agg:              # keep one representative layout to replay
+            agg[key] = [0, [VALRANK[c] for c in sorted(w, reverse=True)],
+                        [VALRANK[c] for c in sorted(e, reverse=True)]]
+        agg[key][0] += weights[i]
     rows = [{"west": k[0], "east": k[1], "break": f"{k[2]}-{k[3]}",
-             "tricks": k[4], "prob": round(100.0 * wt / total, 1)}
-            for k, wt in agg.items()]
+             "tricks": k[4], "prob": round(100.0 * v[0] / total, 1),
+             "wc": v[1], "ec": v[2]}
+            for k, v in agg.items()]
     rows.sort(key=lambda r: (-r["tricks"], -r["prob"]))
     # Store canonically: West is the defender behind the bottom hand, which the
     # N/S-normalising cache can flip. Emit as-if canonical so _display can put it
@@ -1059,7 +1208,8 @@ def _flip_splits(rows):
     for r in rows:
         lw, le = r["break"].split("-")
         out.append({**r, "west": r["east"], "east": r["west"],
-                    "break": f"{le}-{lw}"})
+                    "break": f"{le}-{lw}",
+                    "wc": r.get("ec", []), "ec": r.get("wc", [])})
     return out
 
 

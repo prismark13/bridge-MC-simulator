@@ -134,21 +134,26 @@ def solve_html(top: str, bottom: str, budget: float = 20.0,
                      f"<span class='dim'>(= equally good)</span></div>"
                      f"<table class='alts'>{alts}</table>")
 
-    # SuitPlay-style: how the recommended line pays off by defender split.
+    # SuitPlay-style: how the recommended line pays off by defender split, and
+    # each row is clickable to play the line against that layout, card by card.
     splits = r.get("splits") or []
     split_block = ""
     if splits:
         srows = "".join(
-            f"<tr><td class='st'>{s['tricks']}</td>"
+            f"<tr class='prow' data-wc='{','.join(s.get('wc') or [])}' "
+            f"data-ec='{','.join(s.get('ec') or [])}'>"
+            f"<td class='st'>{s['tricks']}</td>"
             f"<td class='spp'>{s['prob']:.1f}<span class='pc'>%</span></td>"
             f"<td class='sh'>{s['west'] or '—'}</td>"
-            f"<td class='sh'>{s['east'] or '—'}</td></tr>" for s in splits)
+            f"<td class='sh'>{s['east'] or '—'}</td>"
+            f"<td class='pgo'>&#9654;</td></tr>" for s in splits)
         split_block = (
             f"<div class='sec'>by defender split "
-            f"<span class='dim'>(West over Hand 2)</span></div>"
-            f"<details class='drill'><summary>show breakdown</summary>"
-            f"<table class='splits'><tr><th>tks</th><th>chance</th>"
-            f"<th>West</th><th>East</th></tr>{srows}</table></details>")
+            f"<span class='dim'>(tap a row to play it)</span></div>"
+            f"<details class='drill' open><summary>breakdown</summary>"
+            f"<table class='splits' data-top='{top}' data-bot='{bottom}'>"
+            f"<tr><th>tks</th><th>chance</th><th>West</th><th>East</th><th></th>"
+            f"</tr>{srows}</table><div id='player'></div></details>")
     return (f"<div class='res'>{ent_banner}"
             f"<div class='holding'>{top or '<i>void</i>'}"
             f"<span class='vs'>opposite</span>{bottom or '<i>void</i>'}</div>"
@@ -237,6 +242,33 @@ SUIT_HTML = """<!doctype html>
   .trk{display:inline-block;margin-right:9px;white-space:nowrap}
   .arw{color:var(--muted);margin:0 1px;font-size:11px}
   .draw{color:var(--muted);font-style:italic}
+  .prow{cursor:pointer} .prow:hover{background:var(--felt-soft,#1c2a22)}
+  .prow.on{background:var(--felt-soft,#1c2a22)}
+  .pgo{color:var(--accent);font-size:11px} .pdim{color:var(--muted)}
+  #player{margin-top:10px}
+  .ptbl{border:1px solid var(--line);border-radius:10px;padding:12px;background:var(--card)}
+  .phand{display:flex;align-items:center;gap:4px;flex-wrap:wrap;padding:4px 0}
+  .plab{font-size:10px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);
+    width:44px;font-weight:600}
+  .pc2{display:inline-block;min-width:22px;text-align:center;padding:3px 5px;
+    border:1px solid var(--chipline,#3a382f);border-radius:5px;background:var(--bg);
+    font-family:ui-monospace,Consolas,monospace;font-weight:700;font-size:14px}
+  .pc2.sp{opacity:.25}
+  .pmid{display:grid;grid-template-columns:1fr auto 1fr;gap:6px;align-items:center;
+    margin:8px 0;padding:8px 0;border-top:1px solid var(--line);
+    border-bottom:1px solid var(--line)}
+  .pmid .phand{flex-direction:column;align-items:flex-start;gap:2px}
+  .ptrick{display:flex;gap:5px;justify-content:center;min-height:34px;align-items:center}
+  .tcard{display:inline-block;min-width:26px;text-align:center;padding:4px 6px;
+    border:1px solid var(--accent);border-radius:5px;font-family:ui-monospace,monospace;
+    font-weight:700;font-size:14px}
+  .tcard .s{font-size:8px;color:var(--muted);display:block}
+  .tcard.win{background:var(--accent);color:#fff}
+  .pctl{display:flex;align-items:center;gap:8px;margin-top:10px;justify-content:center}
+  .pctl button{font:inherit;font-weight:700;padding:6px 14px;border:1px solid var(--line);
+    border-radius:8px;background:var(--bg);color:var(--ink);cursor:pointer}
+  .pstat{font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums}
+  .pendb{color:var(--accent) !important}
   .ent{background:var(--felt-soft,#1c2a22);border:1px solid var(--line);
     border-radius:8px;padding:7px 10px;margin-bottom:10px;font-size:12px;
     color:var(--muted)}
@@ -356,6 +388,52 @@ document.getElementById('go').addEventListener('click', async () => {
   out.scrollIntoView({behavior:'smooth', block:'nearest'});
 });
 paint();
+
+// ---- interactive play-through ----
+let PLAY=null, STEP=0;
+function pr(x){ return x==='T'?'10':x; }
+function pchip(rank, spent){ return "<span class='pc2"+(spent?' sp':'')+"'>"+pr(rank)+"</span>"; }
+function phand(label, cards, key){
+  const played=new Set();
+  for(let k=0;k<STEP;k++){ const p=PLAY.tricks[k].play; if(p[key]!==undefined) played.add(p[key]); }
+  return "<div class='phand'><span class='plab'>"+label+"</span>"+
+    cards.map(c=>pchip(c, played.has(c))).join('')+"</div>";
+}
+function renderPlayer(){
+  const el=document.getElementById('player'); if(!el) return;
+  if(!PLAY||!PLAY.tricks){ el.innerHTML=''; return; }
+  const T=PLAY.tricks, cur=STEP>0?T[STEP-1]:null, lab={h1:'H1',h2:'H2',w:'W',e:'E'};
+  let tk="<span class='pdim'>press &#9654; to play the first trick</span>";
+  if(cur){ tk=['h1','w','h2','e'].filter(s=>cur.play[s]!==undefined).map(s=>
+    "<span class='tcard"+(s===cur.winner?' win':'')+"'><span class='s'>"+lab[s]+
+    "</span>"+pr(cur.play[s])+"</span>").join(''); }
+  el.innerHTML="<div class='ptbl'>"+phand('Hand 1',PLAY.h1,'h1')+
+    "<div class='pmid'>"+phand('West',PLAY.west,'w')+
+    "<div class='ptrick'>"+tk+"</div>"+phand('East',PLAY.east,'e')+"</div>"+
+    phand('Hand 2',PLAY.h2,'h2')+
+    "<div class='pctl'><button id='pp'>&#9664;</button>"+
+    "<span class='pstat'>trick "+STEP+"/"+T.length+" &middot; won "+(cur?cur.ns:0)+"</span>"+
+    "<button id='pn'>&#9654;</button>"+
+    "<button id='pe' class='pendb'>made "+PLAY.made+" &#9654;&#9654;</button></div></div>";
+  document.getElementById('pp').onclick=()=>{ if(STEP>0){STEP--;renderPlayer();} };
+  document.getElementById('pn').onclick=()=>{ if(STEP<T.length){STEP++;renderPlayer();} };
+  document.getElementById('pe').onclick=()=>{ STEP=T.length; renderPlayer(); };
+}
+document.getElementById('out').addEventListener('click', async (ev)=>{
+  const row=ev.target.closest('.prow'); if(!row) return;
+  const tbl=row.closest('table'); if(!tbl||!tbl.dataset.top&&!tbl.dataset.bot) return;
+  document.querySelectorAll('.prow.on').forEach(r=>r.classList.remove('on'));
+  row.classList.add('on');
+  const pl=document.getElementById('player'); if(pl) pl.innerHTML="<div class='pdim'>dealing…</div>";
+  const fd=new FormData();
+  fd.append('top', tbl.dataset.top||''); fd.append('bottom', tbl.dataset.bot||'');
+  fd.append('wc', row.dataset.wc||''); fd.append('ec', row.dataset.ec||'');
+  try{
+    const r=await fetch('/suit/play',{method:'POST',body:fd});
+    PLAY=await r.json(); STEP=0; renderPlayer();
+    if(pl) pl.scrollIntoView({behavior:'smooth',block:'nearest'});
+  }catch(e){ if(pl) pl.innerHTML="<div class='pdim'>could not load the play.</div>"; }
+});
 </script>
 </body></html>"""
 
