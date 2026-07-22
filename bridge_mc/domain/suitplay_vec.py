@@ -883,6 +883,100 @@ def _trivial(nd):
     return False
 
 
+def _cr(c):
+    """A card for display: its rank if it matters (>= 9), else a low spot ``x``."""
+    return VALRANK[c] if c >= 9 else "x"
+
+
+def _plays(lh, lc, s3, c3):
+    """Declarer's meaningful cards this trick as {hand, rank}: the lead, plus a
+    card played OVER it from the other hand (a finesse or unblock). A lower follow
+    card is just following suit and is left out. Hand 1 = top (N), 2 = bottom."""
+    out = [{"h": 1 if lh == "N" else 2, "r": _cr(lc)}]
+    if c3 is not None and c3 > lc:
+        out.append({"h": 1 if s3 == "N" else 2, "r": _cr(c3)})
+    return out
+
+
+def _is_low_lead(plays):
+    """A single low-spot lead — declarer just running the suit, not a decision."""
+    return len(plays) == 1 and plays[0]["r"] == "x"
+
+
+def _trivial_cards(nd):
+    """A card note that carries no decision — declarer just follows and cashes."""
+    if nd is None:
+        return True
+    if nd.get("draw"):
+        return True
+    if not nd.get("plays") and not nd.get("notes"):
+        return _trivial_cards(nd.get("next"))
+    return False
+
+
+def _to_cards(node, depth=0, shown=frozenset()):
+    """Declarer's optimal conditional line as a drillable tree of the ACTUAL CARDS
+    played — no prose classification (which is where the wording went wrong). Same
+    shape as the word tree: a main line that flows, honour-appears cases hung off
+    it. Each node: ``{"plays": [{h, r}], "win", "notes": [{show, node}], "next"}``;
+    a leaf ``{"draw": True}`` means cash the established winners. ``shown`` carries
+    the honours already noted down the main line so a repeated finesse does not
+    repeat "if the king appears" on every round."""
+    if node is None or depth >= 9:
+        return None
+    if _all_winners(node):
+        return {"draw": True}
+    lc, lh, s3 = node["lc"], node["lh"], node["s3"]
+    honours, main_pool = [], []
+    for br in node["branches"]:
+        (honours if br["c2"] is not None and br["c2"] >= 11
+         else main_pool).append(br)
+    main = max(main_pool or node["branches"], key=lambda b: b["wt"])
+    seen, notes = set(), []
+    for br in sorted(honours, key=lambda b: -b["c2"]):
+        c2, c3 = br["c2"], br["c3"]
+        # The note matters only when declarer COVERS the honour — plays a higher
+        # card over it (e.g. "if the king appears, win the ace"). An honour that
+        # simply wins a trick for the defence, falls under a card already led, or
+        # was already noted earlier on the main line, is not a fresh decision.
+        r = VALRANK[c2]
+        if c2 in seen or r in shown or c3 is None or c3 <= c2:
+            continue
+        seen.add(c2)
+        sub = {"plays": [{"h": 1 if s3 == "N" else 2, "r": _cr(c3)}],
+               "win": br["won"], "notes": [],
+               "next": _to_cards(br["cont"], depth + 1)}
+        notes.append({"show": r, "node": sub})
+    nxt = _to_cards(main["cont"], depth + 1,
+                    shown | {n["show"] for n in notes})
+    return {"plays": _plays(lh, lc, s3, main["c3"]), "win": main["won"],
+            "notes": notes, "next": nxt}
+
+
+def card_tree(ctx, goal, ev=False):
+    """The optimal line for ``goal`` tricks (or the matchpoint line if ``ev``) as a
+    drillable tree of the cards actually played."""
+    N, S, missing, wstate, weights, sv, n = ctx
+    raw = _plan_tree(sv, N, S, wstate, frozenset(range(n)), 0 if ev else goal,
+                     weights, n, *sv.e0, ev=ev)
+    return _to_cards(raw)
+
+
+def card_headline(tree):
+    """The main line down the spine, as a flat list of the tricks' card plays —
+    the collapsed view for the odds table. Pure low-card leads (running the suit)
+    are left off, as they were in the prose version."""
+    spine, node, seen = [], tree, 0
+    while node is not None and seen < 9:
+        if node.get("draw"):
+            break
+        if node.get("plays") and not _is_low_lead(node["plays"]):
+            spine.append(node["plays"])
+        node = node.get("next")
+        seen += 1
+    return spine
+
+
 def plan_tree(ctx, goal):
     """The optimal conditional line for ``goal`` tricks, as a drillable tree."""
     N, S, missing, wstate, weights, sv, n = ctx
@@ -912,9 +1006,9 @@ def matchpoints(ctx):
     ranked = sorted(best.items(), key=lambda x: -x[1])
     top = ranked[0][1] if ranked else 0.0
     ties = [d for d, ev in ranked if abs(ev - top) < 5e-4]
-    raw = _plan_tree(sv, N, S, wstate, active, 0, weights, n, *sv.e0, ev=True)
-    return {"tricks": round(top, 2), "tree": _to_display(raw),
-            "plan": _headline(_to_display(raw)), "equiv": ties}
+    tree = card_tree(ctx, 0, ev=True)
+    return {"tricks": round(top, 2), "tree": tree,
+            "plan": card_headline(tree), "equiv": ties}
 
 
 def _fmt_hand(cards):
@@ -990,19 +1084,25 @@ def describe_plan(ctx, goal):
 
 
 def trees_all(cum, ctx):
-    """{target -> drillable plan tree}. Only targets that involve a real choice
-    (not the ones every line makes) get a tree, mirroring ``plans_all``."""
+    """{target -> drillable CARD tree}. Only targets that involve a real choice
+    (not the ones every line makes) get a tree."""
     out = {}
     for k in sorted(cum, reverse=True):
         if cum[k] >= 99.95:
             continue
         try:
-            t = plan_tree(ctx, k)
+            t = card_tree(ctx, k)
         except Timeout:
             break
         if t:
             out[k] = t
     return out
+
+
+def plays_all(trees):
+    """{target -> card headline} derived from the card trees (the collapsed view
+    for the odds table)."""
+    return {k: card_headline(t) for k, t in trees.items()}
 
 
 def _display(top, bottom, payload):
@@ -1139,8 +1239,8 @@ def suit_vec(top: str, bottom: str, time_budget: float = 30.0,
     if cum:
         try:
             grid = openings_all(top, bottom, time_budget, ctx=ctx)
-            plans = plans_all(top, bottom, cum, time_budget, ctx=ctx)
-            trees = trees_all(cum, ctx)
+            trees = trees_all(cum, ctx)          # drillable CARD trees
+            plans = plays_all(trees)             # collapsed card headlines
             equiv = equiv_all(cum, ctx)
             mp = matchpoints(ctx)
             splits = split_table(ctx, vecs)

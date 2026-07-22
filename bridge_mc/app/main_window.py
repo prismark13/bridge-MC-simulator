@@ -590,7 +590,9 @@ class MainWindow(QMainWindow):
         html = (head +
                 f"<div class='hand'>{cards(r['top'])}"
                 f"<span class='opp'>opposite</span>{cards(r['bottom'])}{badge}</div>"
-                f"<div class='meta'>defenders hold <b>{r['missing']}</b> · {note}</div>")
+                f"<div class='meta'>defenders hold <b>{r['missing']}</b> · {note} · "
+                f"cards played: {_cc('x','1')} = from top, {_cc('x','2')} = bottom, "
+                f"{_cc('K')} = a defender's</div>")
 
         # One table, keyed by target: the chance AND the play that achieves it.
         # A single "Play:" headline had to pick a target silently — and it picked
@@ -600,8 +602,9 @@ class MainWindow(QMainWindow):
         rows = ""
         for k in cols:
             p = pct(k)
-            plan = plans.get(k) or ("<span class='alt'>any line</span>"
-                                    if p >= 99.95 else "")
+            head = plans.get(k)
+            plan = (_card_line(head) if head else
+                    ("<span class='alt'>any line</span>" if p >= 99.95 else ""))
             tree = trees.get(k)
             if tree:
                 plan += (f"<details class='drill'><summary>line</summary>"
@@ -626,7 +629,7 @@ class MainWindow(QMainWindow):
                      f"<span>— play for the average</span></div>"
                      f"<table class='need'><tr>"
                      f"<td class='tgt'>≈&nbsp;{mp['tricks']:.2f} tricks</td>"
-                     f"<td class='pl'>{mp.get('plan','')}{eqnote}{drill}</td>"
+                     f"<td class='pl'>{_card_line(mp.get('plan'))}{eqnote}{drill}</td>"
                      f"</tr></table>")
 
         # Best lines per trick target — the line that maximises 7 tricks is often
@@ -920,6 +923,16 @@ th, td { text-align:left }
 .alt  .pct { color:#6d6b64 }
 .tied  { color:#cbd8c9 }
 .tied .pct { color:#7fb98f }
+.cc    { display:inline-block; min-width:15px; text-align:center; padding:1px 4px;
+  margin:0 1px; border:1px solid #3a382f; border-radius:4px; background:#26251f;
+  font-family:Consolas,monospace; font-weight:700; font-size:12.5px; color:#f2f1ea;
+  line-height:1.35 }
+.cc.x  { color:#8b897f; font-weight:400 }
+.cc sup{ font-size:8px; color:#7ba3d9; font-weight:600; margin-left:1px }
+.trk   { display:inline-block; margin-right:9px; white-space:nowrap }
+.arw   { color:#6d6b64; margin:0 1px; font-size:11px }
+.step .arw { margin:0 3px }
+.draw  { color:#807e75; font-style:italic }
 .splits { margin-top:4px }
 .splits th { font-size:10px; font-weight:600; color:#77756c; letter-spacing:.05em;
   text-transform:uppercase; text-align:left; padding:0 16px 4px 0 }
@@ -948,17 +961,48 @@ th, td { text-align:left }
 """
 
 
+def _cc(rank, hand="") -> str:
+    """One card chip: the rank, with a small hand tag (1 = top, 2 = bottom)."""
+    cls = "cc x" if rank == "x" else "cc"
+    tag = f"<sup>{hand}</sup>" if hand else ""
+    return f"<span class='{cls}'>{rank}{tag}</span>"
+
+
+def _trick_cards(plays) -> str:
+    """A trick's declarer cards as chips, joined by an arrow for a finesse/unblock."""
+    return "<span class='arw'>→</span>".join(_cc(p["r"], p["h"]) for p in plays)
+
+
+def _card_line(headline) -> str:
+    """The collapsed line: the tricks of the main line as chip groups in a row."""
+    if not headline:
+        return ""
+    return "".join(f"<span class='trk'>{_trick_cards(t)}</span>" for t in headline)
+
+
+def _low_lead(plays):
+    return len(plays) == 1 and plays[0]["r"] == "x"
+
+
 def _suit_tree_html(node) -> str:
-    """The drillable plan tree as nested HTML — the main line flows, each honour
-    exception is an expandable node. Shared with the phone screen's markup."""
+    """The drillable line as the actual CARDS played: the main line flows down,
+    each 'if an honour appears' cover is an expandable node."""
     if not node:
         return ""
     html, cur = "", node
     while cur:
-        html += f"<div class='step'>{cur['action']}</div>"
+        if cur.get("draw"):
+            html += "<div class='step draw'>cash the rest</div>"
+            break
+        plays = cur.get("plays") or []
+        if plays and not _low_lead(plays):
+            html += f"<div class='step'>{_trick_cards(plays)}</div>"
         for nt in cur.get("notes") or []:
-            html += (f"<details class='ex'><summary>{nt['cond']}</summary>"
-                     f"<div class='exbody'>{_suit_tree_html(nt['node'])}</div>"
+            sub = nt["node"]
+            resp = _trick_cards(sub.get("plays") or [])
+            html += (f"<details class='ex'><summary>if {_cc(nt['show'])} "
+                     f"<span class='arw'>→</span> {resp}</summary>"
+                     f"<div class='exbody'>{_suit_tree_html(sub.get('next'))}</div>"
                      f"</details>")
         cur = cur.get("next")
     return html

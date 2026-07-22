@@ -14,17 +14,45 @@ from __future__ import annotations
 RANKS = list("AKQJT98765432")
 
 
+def _cc(rank, hand="") -> str:
+    cls = "cc x" if rank == "x" else "cc"
+    tag = f"<sup>{hand}</sup>" if hand else ""
+    return f"<span class='{cls}'>{rank}{tag}</span>"
+
+
+def _trick(plays) -> str:
+    return "<span class='arw'>&rarr;</span>".join(_cc(p["r"], p["h"]) for p in plays)
+
+
+def _card_line(headline) -> str:
+    if not headline:
+        return ""
+    return "".join(f"<span class='trk'>{_trick(t)}</span>" for t in headline)
+
+
+def _low_lead(plays):
+    return len(plays) == 1 and plays[0]["r"] == "x"
+
+
 def _render_tree(node) -> str:
-    """The plan tree as nested HTML: the main line flows top to bottom; each
-    'if the king appears' exception is a drillable <details> you can expand."""
+    """The line as the actual CARDS played: the main line flows top to bottom;
+    each 'if an honour appears' cover is a drillable <details>."""
     if not node:
         return ""
     html, cur = "", node
     while cur:
-        html += f"<div class='step'>{cur['action']}</div>"
+        if cur.get("draw"):
+            html += "<div class='step draw'>cash the rest</div>"
+            break
+        plays = cur.get("plays") or []
+        if plays and not _low_lead(plays):
+            html += f"<div class='step'>{_trick(plays)}</div>"
         for nt in cur.get("notes") or []:
-            html += (f"<details class='ex'><summary>{nt['cond']}</summary>"
-                     f"<div class='exbody'>{_render_tree(nt['node'])}</div>"
+            sub = nt["node"]
+            resp = _trick(sub.get("plays") or [])
+            html += (f"<details class='ex'><summary>if {_cc(nt['show'])} "
+                     f"<span class='arw'>&rarr;</span> {resp}</summary>"
+                     f"<div class='exbody'>{_render_tree(sub.get('next'))}</div>"
                      f"</details>")
         cur = cur.get("next")
     return html
@@ -63,8 +91,10 @@ def solve_html(top: str, bottom: str, budget: float = 20.0,
     rows = ""
     for k in sorted(cum, reverse=True):
         pct = cum[k]
-        plan = plans.get(k) or ("<span class='dim'>any line</span>"
-                                if pct >= 99.95 else "<span class='dim'>—</span>")
+        head = plans.get(k)
+        plan = (_card_line(head) if head else
+                ("<span class='dim'>any line</span>"
+                 if pct >= 99.95 else "<span class='dim'>—</span>"))
         tree = trees.get(k)
         drill = (f"<details class='drill'><summary>line</summary>"
                  f"<div class='tree'>{_render_tree(tree)}</div></details>"
@@ -84,7 +114,7 @@ def solve_html(top: str, bottom: str, budget: float = 20.0,
         mp_block = (f"<div class='sec'>matchpoints — play for the average</div>"
                     f"<table class='need'><tr>"
                     f"<td class='t'>&asymp;{mp['tricks']:.2f}</td>"
-                    f"<td class='pl' colspan='2'>{mp.get('plan','')}"
+                    f"<td class='pl' colspan='2'>{_card_line(mp.get('plan'))}"
                     f"{eqnote}{drill}</td></tr></table>")
 
     grid = r.get("grid") or {}
@@ -123,7 +153,8 @@ def solve_html(top: str, bottom: str, budget: float = 20.0,
             f"<div class='holding'>{top or '<i>void</i>'}"
             f"<span class='vs'>opposite</span>{bottom or '<i>void</i>'}</div>"
             f"<div class='dim sml'>defenders hold <b>{r['missing']}</b> · "
-            f"exact — best line vs best defence</div>"
+            f"exact — best line vs best defence<br>cards: {_cc('x','1')} from "
+            f"Hand 1, {_cc('x','2')} Hand 2, {_cc('K')} a defender's</div>"
             f"<div class='sec'>if you need</div>"
             f"<table class='need'>"
             f"<tr><th>tricks</th><th>chance</th><th>best play</th></tr>{rows}</table>"
@@ -197,6 +228,15 @@ SUIT_HTML = """<!doctype html>
     color:var(--ink)}
   .eq{color:var(--accent);font-weight:800}
   .eqnote{color:var(--muted);font-style:italic;font-size:12px;margin-top:3px}
+  .cc{display:inline-block;min-width:15px;text-align:center;padding:1px 4px;margin:0 1px;
+    border:1px solid var(--line);border-radius:4px;background:var(--bg);
+    font-family:ui-monospace,Consolas,monospace;font-weight:700;font-size:13px;
+    color:var(--ink);line-height:1.35}
+  .cc.x{color:var(--muted);font-weight:400}
+  .cc sup{font-size:8px;color:var(--h1);font-weight:600;margin-left:1px}
+  .trk{display:inline-block;margin-right:9px;white-space:nowrap}
+  .arw{color:var(--muted);margin:0 1px;font-size:11px}
+  .draw{color:var(--muted);font-style:italic}
   .ent{background:var(--felt-soft,#1c2a22);border:1px solid var(--line);
     border-radius:8px;padding:7px 10px;margin-bottom:10px;font-size:12px;
     color:var(--muted)}
